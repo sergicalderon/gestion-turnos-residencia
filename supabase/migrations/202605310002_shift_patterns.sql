@@ -1,5 +1,15 @@
 create extension if not exists "btree_gist";
 
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
 create table if not exists public.shift_patterns (
   id uuid primary key default gen_random_uuid(),
   name text not null,
