@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Wand2 } from "lucide-react";
 import { PageShell } from "@/components/page-shell";
-import { GhostButton, Notice, Select } from "@/components/ui";
+import { Button, Field, GhostButton, Input, Notice, Select } from "@/components/ui";
 import { monthDays, monthLabel, monthRange } from "@/lib/dates";
 import { assignmentHours, monthlyTarget, proportionalTarget } from "@/lib/hours";
 import type { Employee, ShiftAssignment, ShiftType } from "@/lib/database.types";
+import { generateShiftsFromPatterns } from "@/lib/pattern-generation";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase/client";
 
 export default function SchedulePage() {
@@ -19,6 +20,15 @@ export default function SchedulePage() {
   const [yearAssignments, setYearAssignments] = useState<ShiftAssignment[]>([]);
   const [message, setMessage] = useState("");
   const [savingCell, setSavingCell] = useState<string | null>(null);
+  const [showGenerate, setShowGenerate] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [generateForm, setGenerateForm] = useState({
+    start_date: "",
+    end_date: "",
+    allEmployees: true,
+    employeeIds: [] as string[],
+    overwriteExisting: false
+  });
 
   const days = useMemo(() => monthDays(year, month), [year, month]);
   const range = useMemo(() => monthRange(year, month), [year, month]);
@@ -62,6 +72,14 @@ export default function SchedulePage() {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    setGenerateForm((current) => ({
+      ...current,
+      start_date: range.startIso,
+      end_date: range.endIso
+    }));
+  }, [range.endIso, range.startIso]);
+
   function moveMonth(delta: number) {
     const next = new Date(year, month - 1 + delta, 1);
     setYear(next.getFullYear());
@@ -77,12 +95,39 @@ export default function SchedulePage() {
       if (existing) await supabase.from("shift_assignments").delete().eq("id", existing.id);
     } else {
       await supabase.from("shift_assignments").upsert(
-        { employee_id: employeeId, date, shift_type_id: shiftTypeId },
+        {
+          employee_id: employeeId,
+          date,
+          shift_type_id: shiftTypeId,
+          source: "manual",
+          employee_shift_pattern_id: null,
+          generated_at: null
+        },
         { onConflict: "employee_id,date" }
       );
     }
     await loadData();
     setSavingCell(null);
+  }
+
+  async function generatePatternAssignments() {
+    if (!supabase) return;
+    setGenerating(true);
+    setMessage("");
+    try {
+      const result = await generateShiftsFromPatterns(supabase, {
+        startDate: generateForm.start_date,
+        endDate: generateForm.end_date,
+        employeeIds: generateForm.allEmployees ? undefined : generateForm.employeeIds,
+        overwriteExisting: generateForm.overwriteExisting
+      });
+      setMessage(`Generados ${result.generated} turnos. Omitidos por existentes: ${result.skippedExisting}.`);
+      await loadData();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudieron generar los turnos.");
+    } finally {
+      setGenerating(false);
+    }
   }
 
   function employeeSummary(employee: Employee) {
@@ -116,12 +161,66 @@ export default function SchedulePage() {
               <option key={optionYear} value={optionYear}>{optionYear}</option>
             ))}
           </Select>
+          <Button type="button" onClick={() => setShowGenerate((current) => !current)}><Wand2 className="h-4 w-4" />Generar turnos desde patrones</Button>
           <GhostButton type="button" onClick={loadData}><RefreshCw className="h-4 w-4" /></GhostButton>
         </>
       }
     >
       {!isSupabaseConfigured ? <Notice>Configura las variables de Supabase para cargar y guardar la planilla.</Notice> : null}
       {message ? <div className="mb-4 rounded-md border border-coral/40 bg-[#fff0ed] px-4 py-3 text-sm">{message}</div> : null}
+      {showGenerate ? (
+        <div className="mb-5 rounded-md border border-line bg-white p-4 shadow-subtle">
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="font-semibold">Generar turnos desde patrones</h3>
+            <GhostButton type="button" onClick={() => setShowGenerate(false)}>Cerrar</GhostButton>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-[180px_180px_1fr_auto] lg:items-end">
+            <Field label="Fecha inicio">
+              <Input type="date" value={generateForm.start_date} onChange={(event) => setGenerateForm({ ...generateForm, start_date: event.target.value })} />
+            </Field>
+            <Field label="Fecha fin">
+              <Input type="date" value={generateForm.end_date} onChange={(event) => setGenerateForm({ ...generateForm, end_date: event.target.value })} />
+            </Field>
+            <div className="grid gap-2">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input type="checkbox" checked={generateForm.allEmployees} onChange={(event) => setGenerateForm({ ...generateForm, allEmployees: event.target.checked })} />
+                Todos los empleados activos con patron asignado
+              </label>
+              {!generateForm.allEmployees ? (
+                <div className="grid max-h-36 gap-2 overflow-auto rounded-md border border-line p-2">
+                  {employees.map((employee) => (
+                    <label key={employee.id} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={generateForm.employeeIds.includes(employee.id)}
+                        onChange={(event) => {
+                          const employeeIds = event.target.checked
+                            ? [...generateForm.employeeIds, employee.id]
+                            : generateForm.employeeIds.filter((id) => id !== employee.id);
+                          setGenerateForm({ ...generateForm, employeeIds });
+                        }}
+                      />
+                      {employee.name}
+                    </label>
+                  ))}
+                </div>
+              ) : null}
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input type="checkbox" checked={generateForm.overwriteExisting} onChange={(event) => setGenerateForm({ ...generateForm, overwriteExisting: event.target.checked })} />
+                Sobrescribir turnos existentes
+              </label>
+            </div>
+            <Button
+              type="button"
+              disabled={generating || !generateForm.start_date || !generateForm.end_date || (!generateForm.allEmployees && generateForm.employeeIds.length === 0)}
+              onClick={generatePatternAssignments}
+            >
+              <Wand2 className="h-4 w-4" />
+              Generar
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <div className="spreadsheet-scroll overflow-auto rounded-md border border-line bg-white shadow-subtle">
         <table className="w-full min-w-[1280px] border-collapse text-sm">
           <thead>

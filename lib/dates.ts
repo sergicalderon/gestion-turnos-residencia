@@ -38,6 +38,14 @@ export function enumerateDates(startIso: string, endIso: string) {
   return dates;
 }
 
+export function maxIsoDate(...dates: string[]) {
+  return dates.reduce((max, date) => (date > max ? date : max));
+}
+
+export function minIsoDate(...dates: string[]) {
+  return dates.reduce((min, date) => (date < min ? date : min));
+}
+
 export function dateIsWithinMonthEmployment(dateIso: string, startIso: string, endIso: string | null) {
   const date = parseISO(dateIso);
   const start = parseISO(startIso);
