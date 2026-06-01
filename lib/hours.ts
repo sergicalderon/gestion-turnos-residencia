@@ -7,14 +7,29 @@ export function assignmentHours(assignments: ShiftAssignment[], shiftTypes: Shif
   }, 0);
 }
 
-export function proportionalTarget(employee: Employee, month: number) {
-  const annualTarget = Number(employee.annual_target_hours);
+export function annualTarget(employee: Employee) {
+  const annualTargetHours = Number(employee.annual_target_hours);
   const percentage = Number(employee.workday_percentage) / 100;
-  return (annualTarget * percentage * month) / 12;
+  return annualTargetHours * percentage;
+}
+
+export function proportionalTarget(employee: Employee, month: number) {
+  return (annualTarget(employee) * month) / 12;
+}
+
+export function proportionalTargetUntilDate(employee: Employee, year: number, today = new Date()) {
+  const start = new Date(year, 0, 1);
+  const end = new Date(year, 11, 31);
+  const targetDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+  if (targetDate < start) return 0;
+
+  const cappedDate = new Date(Math.min(targetDate.getTime(), end.getTime()));
+  const elapsedDays = Math.floor((cappedDate.getTime() - start.getTime()) / 86400000) + 1;
+  const totalDays = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+  return (annualTarget(employee) * elapsedDays) / totalDays;
 }
 
 export function monthlyTarget(employee: Employee) {
-  const annualTarget = Number(employee.annual_target_hours);
-  const percentage = Number(employee.workday_percentage) / 100;
-  return (annualTarget * percentage) / 12;
+  return annualTarget(employee) / 12;
 }
