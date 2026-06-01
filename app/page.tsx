@@ -289,8 +289,8 @@ export default function SchedulePage() {
           <colgroup>
             <col className="schedule-employee-col" />
             {days.map((day) => <col key={day.iso} className="schedule-day-col" />)}
-            <col className="schedule-total-col" />
-            <col className="schedule-diff-col" />
+            <col className="schedule-summary-col schedule-total-col" />
+            <col className="schedule-summary-col schedule-diff-col" />
           </colgroup>
           <thead>
             <tr className="bg-paper">
@@ -301,8 +301,8 @@ export default function SchedulePage() {
                   <span className="font-semibold">{day.day}</span>
                 </th>
               ))}
-              <th className="schedule-summary-header sticky top-0 z-20 border-b border-r border-line bg-paper px-2 text-right">Mes</th>
-              <th className="schedule-summary-header sticky top-0 z-20 border-b border-line bg-paper px-2 text-right">Diferencia mensual</th>
+              <th className="schedule-summary-header sticky top-0 z-20 border-b border-r border-line bg-paper px-3 text-right">Mes</th>
+              <th className="schedule-summary-header sticky top-0 z-20 border-b border-line bg-paper px-3 text-right">Dif.</th>
             </tr>
           </thead>
           <tbody>
@@ -313,6 +313,12 @@ export default function SchedulePage() {
                   <th className="schedule-employee-cell sticky left-0 z-10 border-r border-line bg-white px-2 text-left font-semibold">
                     <span className="block truncate">{employee.name}</span>
                     <span className="block truncate text-xs font-normal text-moss">{selectedDepartmentId === ALL_DEPARTMENTS ? departments.find((department) => department.id === employee.department_id)?.name ?? "Sin departamento" : selectedDepartment?.name ?? "Sin departamento"}</span>
+                    <span className="schedule-mobile-summary mt-1 block text-xs font-normal text-ink md:hidden">
+                      <span>Mes: {summary.monthHours.toFixed(1)} / {summary.monthTarget.toFixed(1)}</span>
+                      <span className={summary.diff >= 0 ? "text-moss" : "text-coral"}>
+                        Dif.: {summary.diff >= 0 ? "+" : ""}{summary.diff.toFixed(1)} h
+                      </span>
+                    </span>
                   </th>
                   {days.map((day) => {
                     const key = `${employee.id}-${day.iso}`;
@@ -335,8 +341,8 @@ export default function SchedulePage() {
                       </td>
                     );
                   })}
-                  <td className="schedule-summary-cell border-r border-line px-2 text-right">{summary.monthHours.toFixed(1)} / {summary.monthTarget.toFixed(1)}</td>
-                  <td className={`schedule-summary-cell px-2 text-right font-semibold ${summary.diff >= 0 ? "text-moss" : "text-coral"}`}>
+                  <td className="schedule-summary-cell border-r border-line px-3 text-right">{summary.monthHours.toFixed(1)} / {summary.monthTarget.toFixed(1)}</td>
+                  <td className={`schedule-summary-cell px-3 text-right font-semibold ${summary.diff >= 0 ? "text-moss" : "text-coral"}`}>
                     {summary.diff >= 0 ? "+" : ""}{summary.diff.toFixed(1)} h
                     {summary.hasMissingWorkload ? <div className="text-xs font-normal text-coral">Sin jornada definida</div> : null}
                   </td>
