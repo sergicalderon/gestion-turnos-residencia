@@ -8,7 +8,7 @@ import { PageShell } from "@/components/page-shell";
 import { Button, Field, GhostButton, Input, Notice, Select } from "@/components/ui";
 import { ALL_DEPARTMENTS, departmentSlug, findDepartmentByParam } from "@/lib/departments";
 import { monthDays, monthLabel, monthRange } from "@/lib/dates";
-import { assignmentHours, workloadTargetForExactRange, workloadTargetForRange } from "@/lib/hours";
+import { assignmentHours, operationalMonthlyTarget } from "@/lib/hours";
 import type { Department, Employee, EmployeeWorkloadPeriod, ShiftAssignment, ShiftType } from "@/lib/database.types";
 import { generateShiftsFromPatterns } from "@/lib/pattern-generation";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase/client";
@@ -25,7 +25,6 @@ export default function SchedulePage() {
   const [workloadPeriods, setWorkloadPeriods] = useState<EmployeeWorkloadPeriod[]>([]);
   const [shiftTypes, setShiftTypes] = useState<ShiftType[]>([]);
   const [monthAssignments, setMonthAssignments] = useState<ShiftAssignment[]>([]);
-  const [yearAssignments, setYearAssignments] = useState<ShiftAssignment[]>([]);
   const [message, setMessage] = useState("");
   const [savingCell, setSavingCell] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -62,7 +61,6 @@ export default function SchedulePage() {
   const loadData = useCallback(async () => {
     if (!supabase) return;
     setMessage("");
-    const yearStart = `${year}-01-01`;
     const { data: employeeData, error: employeeError } = await supabase
       .from("employees")
       .select("*")
@@ -74,7 +72,7 @@ export default function SchedulePage() {
       .from("employee_workload_periods")
       .select("*")
       .lte("start_date", range.endIso)
-      .or(`end_date.is.null,end_date.gte.${yearStart}`)
+      .or(`end_date.is.null,end_date.gte.${range.startIso}`)
       .order("start_date");
     const { data: typeData, error: typeError } = await supabase.from("shift_types").select("*").order("code");
     const { data: departmentData, error: departmentError } = await supabase.from("departments").select("*").order("name");
@@ -83,13 +81,8 @@ export default function SchedulePage() {
       .select("*")
       .gte("date", range.startIso)
       .lte("date", range.endIso);
-    const { data: yearData, error: yearError } = await supabase
-      .from("shift_assignments")
-      .select("*")
-      .gte("date", yearStart)
-      .lte("date", range.endIso);
 
-    const error = employeeError ?? workloadError ?? typeError ?? departmentError ?? monthError ?? yearError;
+    const error = employeeError ?? workloadError ?? typeError ?? departmentError ?? monthError;
     if (error) setMessage(error.message);
     setEmployees(employeeData ?? []);
     const nextDepartments = departmentData ?? [];
@@ -99,8 +92,7 @@ export default function SchedulePage() {
     setWorkloadPeriods(workloadData ?? []);
     setShiftTypes(typeData ?? []);
     setMonthAssignments(monthData ?? []);
-    setYearAssignments(yearData ?? []);
-  }, [range.endIso, range.startIso, searchParams, year]);
+  }, [range.endIso, range.startIso, searchParams]);
 
   useEffect(() => {
     loadData();
@@ -187,19 +179,14 @@ export default function SchedulePage() {
 
   function employeeSummary(employee: Employee) {
     const monthRows = monthAssignments.filter((assignment) => assignment.employee_id === employee.id);
-    const yearRows = yearAssignments.filter((assignment) => assignment.employee_id === employee.id);
     const monthHours = assignmentHours(monthRows, shiftTypes);
-    const yearHours = assignmentHours(yearRows, shiftTypes);
     const employeePeriods = workloadPeriods.filter((period) => period.employee_id === employee.id);
-    const monthTarget = workloadTargetForExactRange(employee, employeePeriods, year, range.startIso, range.endIso);
-    const target = workloadTargetForRange(employee, employeePeriods, year, range.endIso);
+    const monthTarget = operationalMonthlyTarget(employee, employeePeriods, range.startIso, range.endIso);
     return {
       monthHours,
-      yearHours,
       monthTarget: monthTarget.target,
-      target: target.target,
-      hasMissingWorkload: monthTarget.missingRanges.length > 0 || target.missingRanges.length > 0,
-      diff: yearHours - target.target
+      hasMissingWorkload: monthTarget.missingRanges.length > 0,
+      diff: monthHours - monthTarget.target
     };
   }
 
@@ -303,7 +290,6 @@ export default function SchedulePage() {
             <col className="schedule-employee-col" />
             {days.map((day) => <col key={day.iso} className="schedule-day-col" />)}
             <col className="schedule-total-col" />
-            <col className="schedule-total-col" />
             <col className="schedule-diff-col" />
           </colgroup>
           <thead>
@@ -316,8 +302,7 @@ export default function SchedulePage() {
                 </th>
               ))}
               <th className="schedule-summary-header sticky top-0 z-20 border-b border-r border-line bg-paper px-2 text-right">Mes</th>
-              <th className="schedule-summary-header sticky top-0 z-20 border-b border-r border-line bg-paper px-2 text-right">Año</th>
-              <th className="schedule-summary-header sticky top-0 z-20 border-b border-line bg-paper px-2 text-right">Dif.</th>
+              <th className="schedule-summary-header sticky top-0 z-20 border-b border-line bg-paper px-2 text-right">Diferencia mensual</th>
             </tr>
           </thead>
           <tbody>
@@ -351,7 +336,6 @@ export default function SchedulePage() {
                     );
                   })}
                   <td className="schedule-summary-cell border-r border-line px-2 text-right">{summary.monthHours.toFixed(1)} / {summary.monthTarget.toFixed(1)}</td>
-                  <td className="schedule-summary-cell border-r border-line px-2 text-right">{summary.yearHours.toFixed(1)} / {summary.target.toFixed(1)}</td>
                   <td className={`schedule-summary-cell px-2 text-right font-semibold ${summary.diff >= 0 ? "text-moss" : "text-coral"}`}>
                     {summary.diff >= 0 ? "+" : ""}{summary.diff.toFixed(1)} h
                     {summary.hasMissingWorkload ? <div className="text-xs font-normal text-coral">Sin jornada definida</div> : null}

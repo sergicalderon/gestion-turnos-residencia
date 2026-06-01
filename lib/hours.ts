@@ -117,6 +117,62 @@ export function annualTargetByPeriods(employee: Employee, periods: EmployeeWorkl
   return workloadTargetForRange(employee, periods, year);
 }
 
+export function operationalMonthlyTarget(
+  employee: Employee,
+  periods: EmployeeWorkloadPeriod[],
+  rangeStartIso: string,
+  rangeEndIso: string
+): WorkloadTargetResult {
+  const effectiveStart = maxIso(rangeStartIso, employee.start_date);
+  const effectiveEnd = minIso(rangeEndIso, employee.end_date ?? rangeEndIso);
+
+  if (effectiveStart > effectiveEnd) {
+    return { target: 0, missingRanges: [], effectiveStart, effectiveEnd };
+  }
+
+  if (periods.length === 0) {
+    return { target: annualTarget(employee) / 11, missingRanges: [], effectiveStart, effectiveEnd };
+  }
+
+  const effectiveDays = daysBetweenInclusive(effectiveStart, effectiveEnd);
+  const intersectingPeriods = periods
+    .filter((period) => period.employee_id === employee.id)
+    .map((period) => ({
+      ...period,
+      clippedStart: maxIso(effectiveStart, period.start_date),
+      clippedEnd: minIso(effectiveEnd, period.end_date ?? effectiveEnd)
+    }))
+    .filter((period) => period.clippedStart <= period.clippedEnd)
+    .sort((first, second) => first.clippedStart.localeCompare(second.clippedStart));
+
+  let target = 0;
+  const missingRanges: { start: string; end: string }[] = [];
+  let cursor = effectiveStart;
+
+  for (const period of intersectingPeriods) {
+    if (cursor < period.clippedStart) {
+      const missingEnd = format(parseISO(period.clippedStart).getTime() - 86400000, "yyyy-MM-dd");
+      missingRanges.push({ start: cursor, end: missingEnd });
+    }
+
+    const periodDays = daysBetweenInclusive(period.clippedStart, period.clippedEnd);
+    target +=
+      Number(period.annual_hours_full_time) *
+      (Number(period.workload_percentage) / 100) *
+      (periodDays / effectiveDays) /
+      11;
+
+    const nextCursor = format(parseISO(period.clippedEnd).getTime() + 86400000, "yyyy-MM-dd");
+    if (nextCursor > cursor) cursor = nextCursor;
+  }
+
+  if (cursor <= effectiveEnd) {
+    missingRanges.push({ start: cursor, end: effectiveEnd });
+  }
+
+  return { target, missingRanges, effectiveStart, effectiveEnd };
+}
+
 export function proportionalTarget(employee: Employee, month: number) {
   return (annualTarget(employee) * month) / 12;
 }

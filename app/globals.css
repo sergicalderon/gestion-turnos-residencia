@@ -40,8 +40,8 @@ textarea {
 .schedule-table {
   --employee-width: clamp(150px, calc(176px * var(--schedule-zoom)), 218px);
   --summary-width: clamp(78px, calc(92px * var(--schedule-zoom)), 112px);
-  --diff-width: clamp(76px, calc(88px * var(--schedule-zoom)), 108px);
-  --fixed-schedule-width: calc(var(--employee-width) + (var(--summary-width) * 2) + var(--diff-width));
+  --diff-width: clamp(120px, calc(136px * var(--schedule-zoom)), 156px);
+  --fixed-schedule-width: calc(var(--employee-width) + var(--summary-width) + var(--diff-width));
   --row-height: clamp(28px, calc(34px * var(--schedule-zoom)), 42px);
   --header-height: clamp(36px, calc(42px * var(--schedule-zoom)), 52px);
   table-layout: fixed;
