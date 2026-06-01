@@ -6,7 +6,13 @@ import { PageShell } from "@/components/page-shell";
 import { Button, Field, GhostButton, Input, Notice, Select, Textarea } from "@/components/ui";
 import { ALL_DEPARTMENTS } from "@/lib/departments";
 import type { Department, Employee, EmployeeShiftPattern, ShiftPattern, ShiftPatternDay, ShiftType } from "@/lib/database.types";
-import { patternCycleStats, simulatePatternYear } from "@/lib/pattern-analytics";
+import {
+  patternCycleStats,
+  simulatePatternYear,
+  workloadEquivalenceLabel,
+  workloadEquivalencePercentage,
+  type WorkloadEquivalenceLabel
+} from "@/lib/pattern-analytics";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase/client";
 
 const todayIso = new Date().toISOString().slice(0, 10);
@@ -50,7 +56,7 @@ export default function PatternsPage() {
     year: currentYear,
     start_date: `${currentYear}-01-01`,
     start_day_index: 1,
-    annual_target_hours: 1772,
+    full_time_annual_hours: 1772,
     range_mode: "year" as "year" | "custom",
     custom_start_date: `${currentYear}-01-01`,
     custom_end_date: `${currentYear}-12-31`
@@ -97,7 +103,7 @@ export default function PatternsPage() {
     year: Number(simulationForm.year),
     startDate: simulationForm.start_date,
     startDayIndex: Math.max(0, Number(simulationForm.start_day_index) - 1),
-    annualTargetHours: Number(simulationForm.annual_target_hours),
+    fullTimeAnnualHours: Number(simulationForm.full_time_annual_hours),
     rangeMode: simulationForm.range_mode,
     customStartDate: simulationForm.custom_start_date,
     customEndDate: simulationForm.custom_end_date
@@ -125,6 +131,9 @@ export default function PatternsPage() {
     () => simulatePatternYear(selectedPatternDays, shiftTypeById, simulationParams),
     [selectedPatternDays, shiftTypeById, simulationParams]
   );
+  const formEquivalence = workloadEquivalencePercentage(formStats.theoreticalAnnualHours, Number(simulationForm.full_time_annual_hours));
+  const selectedTheoreticalEquivalence = workloadEquivalencePercentage(selectedStats.theoreticalAnnualHours, Number(simulationForm.full_time_annual_hours));
+  const selectedSimulationEquivalence = workloadEquivalencePercentage(selectedSimulation.totalHours, Number(simulationForm.full_time_annual_hours));
 
   async function loadData() {
     if (!supabase) return;
@@ -306,6 +315,8 @@ export default function PatternsPage() {
             const days = patternDaysById.get(pattern.id) ?? [];
             const stats = patternCycleStats(days, shiftTypeById, Number(simulationForm.year));
             const simulation = simulatePatternYear(days, shiftTypeById, simulationParams);
+            const equivalence = workloadEquivalencePercentage(stats.theoreticalAnnualHours, Number(simulationForm.full_time_annual_hours));
+            const equivalenceLabel = workloadEquivalenceLabel(equivalence);
             return (
               <button
                 key={pattern.id}
@@ -317,13 +328,14 @@ export default function PatternsPage() {
                 <span className="text-sm text-moss">{departmentById.get(pattern.department_id ?? "")?.name ?? "Global"} · {stats.cycleDays} dias · {pattern.is_active ? "Activo" : "Inactivo"}</span>
                 <span className="mt-2 block truncate text-xs text-ink">{stats.sequence || "Sin secuencia"}</span>
                 <span className="mt-2 grid grid-cols-2 gap-1 text-xs text-moss">
+                  <span>{formatHours(stats.theoreticalAnnualHours)} h/año</span>
+                  <span>{formatPercent(equivalence)} jornada</span>
                   <span>{formatHours(stats.hoursPerCycle)} h/ciclo</span>
-                  <span>{formatHours(stats.theoreticalAnnualHours)} h teoricas</span>
                   <span>{stats.workedShiftsPerCycle} trabajados</span>
-                  <span>{formatHours(simulation.totalHours)} h simuladas</span>
-                  <span className={simulation.differenceFromTarget >= 0 ? "text-moss" : "text-coral"}>
-                    {formatSignedHours(simulation.differenceFromTarget)}
-                  </span>
+                </span>
+                <span className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                  <EquivalenceBadge label={equivalenceLabel} />
+                  <span className="text-moss">{formatHours(simulation.totalHours)} h simuladas</span>
                 </span>
               </button>
             );
@@ -376,9 +388,10 @@ export default function PatternsPage() {
                   <Metric label="Dias del ciclo" value={`${formStats.cycleDays}`} />
                   <Metric label="Turnos trabajados por ciclo" value={`${formStats.workedShiftsPerCycle}`} />
                   <Metric label="Horas computables por ciclo" value={`${formatHours(formStats.hoursPerCycle)} h`} />
-                  <Metric label="Estimacion anual teorica" value={`${formatHours(formStats.theoreticalAnnualHours)} h`} />
-                  <Metric label="Diferencia referencia" value={formatSignedHours(formStats.theoreticalAnnualHours - Number(simulationForm.annual_target_hours))} />
+                  <Metric label="Horas anuales estimadas" value={`${formatHours(formStats.theoreticalAnnualHours)} h`} />
+                  <Metric label="Equivalencia jornada" value={formatPercent(formEquivalence)} />
                 </div>
+                <EquivalenceBadge label={workloadEquivalenceLabel(formEquivalence)} />
               </div>
               <Button type="button" disabled={saving} onClick={savePattern}><Save className="h-4 w-4" />Guardar patron</Button>
             </div>
@@ -387,7 +400,7 @@ export default function PatternsPage() {
           <div className="rounded-md border border-line bg-white p-4 shadow-subtle">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <h3 className="font-semibold">Simulacion exacta</h3>
-              <span className="text-xs font-medium text-moss">Analisis sin crear turnos reales</span>
+              <span className="text-xs font-medium text-moss">Equivalencia informativa, sin crear turnos reales</span>
             </div>
             <div className="grid gap-3 md:grid-cols-4">
               <Field label="Año seleccionado">
@@ -413,8 +426,8 @@ export default function PatternsPage() {
               <Field label="Dia inicial del ciclo">
                 <Input type="number" min="1" value={simulationForm.start_day_index} onChange={(event) => setSimulationForm({ ...simulationForm, start_day_index: Number(event.target.value) })} />
               </Field>
-              <Field label="Objetivo anual referencia">
-                <Input type="number" min="0" step="0.01" value={simulationForm.annual_target_hours} onChange={(event) => setSimulationForm({ ...simulationForm, annual_target_hours: Number(event.target.value) })} />
+              <Field label="Horas anuales jornada completa">
+                <Input type="number" min="0" step="0.01" value={simulationForm.full_time_annual_hours} onChange={(event) => setSimulationForm({ ...simulationForm, full_time_annual_hours: Number(event.target.value) })} />
               </Field>
             </div>
             <div className="mt-3 grid gap-3 md:grid-cols-[220px_1fr_1fr]">
@@ -449,9 +462,10 @@ export default function PatternsPage() {
                   <Metric label="Numero de dias del ciclo" value={`${selectedStats.cycleDays}`} />
                   <Metric label="Turnos trabajados por ciclo" value={`${selectedStats.workedShiftsPerCycle}`} />
                   <Metric label="Horas computables por ciclo" value={`${formatHours(selectedStats.hoursPerCycle)} h`} />
-                  <Metric label="Estimacion anual teorica" value={`${formatHours(selectedStats.theoreticalAnnualHours)} h`} />
-                  <Metric label="Diferencia teorica" value={formatSignedHours(selectedStats.theoreticalAnnualHours - Number(simulationForm.annual_target_hours))} />
+                  <Metric label="Horas anuales estimadas" value={`${formatHours(selectedStats.theoreticalAnnualHours)} h`} />
+                  <Metric label="Equivalencia jornada" value={formatPercent(selectedTheoreticalEquivalence)} />
                 </div>
+                <EquivalenceBadge label={workloadEquivalenceLabel(selectedTheoreticalEquivalence)} />
               </div>
               <div className="grid gap-2 rounded-md border border-line bg-paper p-3 text-sm">
                 <div className="font-semibold">Resultado simulado</div>
@@ -460,11 +474,15 @@ export default function PatternsPage() {
                   <Metric label="Horas totales" value={`${formatHours(selectedSimulation.totalHours)} h`} />
                   <Metric label="Dias trabajados" value={`${selectedSimulation.workedDays}`} />
                   <Metric label="Dias libres" value={`${selectedSimulation.freeDays}`} />
-                  <Metric label="Objetivo referencia" value={`${formatHours(Number(simulationForm.annual_target_hours))} h`} />
-                  <Metric label="Diferencia" value={formatSignedHours(selectedSimulation.differenceFromTarget)} />
+                  <Metric label="Equivalencia simulada" value={formatPercent(selectedSimulationEquivalence)} />
+                  <Metric label="Diferencia jornada completa" value={formatSignedHours(selectedSimulation.differenceFromFullTimeAnnualHours)} />
                 </div>
+                <EquivalenceBadge label={workloadEquivalenceLabel(selectedSimulationEquivalence)} />
               </div>
             </div>
+            <p className="mt-3 text-xs text-moss">
+              Esta equivalencia no sustituye el historico de jornadas del empleado.
+            </p>
             <div className="mt-3 rounded-md border border-line bg-white p-3">
               <div className="mb-2 text-sm font-semibold">Apariciones por tipo de turno</div>
               <div className="flex flex-wrap gap-2">
@@ -559,11 +577,32 @@ function formatSignedHours(value: number) {
   return "0 h";
 }
 
+function formatPercent(value: number) {
+  return `${new Intl.NumberFormat("es-ES", {
+    maximumFractionDigits: 1
+  }).format(value)}%`;
+}
+
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
       <div className="text-xs font-medium uppercase tracking-wide text-moss">{label}</div>
       <div className="break-words font-semibold text-ink">{value}</div>
     </div>
+  );
+}
+
+function EquivalenceBadge({ label }: { label: WorkloadEquivalenceLabel }) {
+  const classNameByLabel: Record<WorkloadEquivalenceLabel, string> = {
+    parcial: "border-line bg-white text-moss",
+    "parcial alta": "border-saffron/40 bg-[#fff7df] text-ink",
+    "jornada completa": "border-mint bg-mint text-ink",
+    "exceso de jornada": "border-coral/40 bg-[#fff0ed] text-coral"
+  };
+
+  return (
+    <span className={`inline-flex w-fit items-center rounded-md border px-2 py-1 text-xs font-semibold ${classNameByLabel[label]}`}>
+      {label}
+    </span>
   );
 }

@@ -13,7 +13,7 @@ export type PatternSimulationParams = {
   year: number;
   startDate: string;
   startDayIndex: number;
-  annualTargetHours: number;
+  fullTimeAnnualHours: number;
   rangeMode: "year" | "custom";
   customStartDate: string;
   customEndDate: string;
@@ -26,8 +26,10 @@ export type PatternSimulationResult = {
   workedDays: number;
   freeDays: number;
   countsByShiftTypeId: Record<string, number>;
-  differenceFromTarget: number;
+  differenceFromFullTimeAnnualHours: number;
 };
+
+export type WorkloadEquivalenceLabel = "parcial" | "parcial alta" | "jornada completa" | "exceso de jornada";
 
 function mod(value: number, divisor: number) {
   return ((value % divisor) + divisor) % divisor;
@@ -59,6 +61,18 @@ export function patternCycleStats(
   };
 }
 
+export function workloadEquivalencePercentage(patternAnnualHours: number, fullTimeAnnualHours: number) {
+  if (fullTimeAnnualHours <= 0) return 0;
+  return (patternAnnualHours / fullTimeAnnualHours) * 100;
+}
+
+export function workloadEquivalenceLabel(percentage: number): WorkloadEquivalenceLabel {
+  if (percentage < 50) return "parcial";
+  if (percentage >= 95 && percentage <= 105) return "jornada completa";
+  if (percentage > 105) return "exceso de jornada";
+  return "parcial alta";
+}
+
 export function simulatePatternYear(
   days: ShiftPatternDay[],
   shiftTypeById: Map<string, ShiftType>,
@@ -79,7 +93,7 @@ export function simulatePatternYear(
       workedDays: 0,
       freeDays: 0,
       countsByShiftTypeId,
-      differenceFromTarget: -Number(params.annualTargetHours || 0)
+      differenceFromFullTimeAnnualHours: -Number(params.fullTimeAnnualHours || 0)
     };
   }
 
@@ -111,6 +125,6 @@ export function simulatePatternYear(
     workedDays,
     freeDays,
     countsByShiftTypeId,
-    differenceFromTarget: totalHours - Number(params.annualTargetHours || 0)
+    differenceFromFullTimeAnnualHours: totalHours - Number(params.fullTimeAnnualHours || 0)
   };
 }
