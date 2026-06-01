@@ -13,6 +13,8 @@
 html,
 body {
   min-height: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 body {
@@ -34,7 +36,11 @@ textarea {
 }
 
 .schedule-shell {
+  width: 100%;
+  max-width: 100%;
   max-height: calc(100vh - 132px);
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .schedule-table {
@@ -114,11 +120,15 @@ textarea {
   text-align-last: center;
 }
 
-@media (max-width: 767px) {
+@media (max-width: 1023px) {
   .schedule-summary-col,
   .schedule-summary-header,
   .schedule-summary-cell {
     display: none;
+  }
+
+  .schedule-shell {
+    max-height: calc(100vh - 150px);
   }
 
   .schedule-table {

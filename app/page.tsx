@@ -284,7 +284,7 @@ export default function SchedulePage() {
           </div>
         </div>
       ) : null}
-      <div className="spreadsheet-scroll schedule-shell overflow-auto rounded-md border border-line bg-white shadow-subtle">
+      <div className="spreadsheet-scroll schedule-shell overflow-x-auto overflow-y-auto rounded-md border border-line bg-white shadow-subtle">
         <table className="schedule-table w-full border-collapse text-sm" style={scheduleTableStyle}>
           <colgroup>
             <col className="schedule-employee-col" />
@@ -313,7 +313,7 @@ export default function SchedulePage() {
                   <th className="schedule-employee-cell sticky left-0 z-10 border-r border-line bg-white px-2 text-left font-semibold">
                     <span className="block truncate">{employee.name}</span>
                     <span className="block truncate text-xs font-normal text-moss">{selectedDepartmentId === ALL_DEPARTMENTS ? departments.find((department) => department.id === employee.department_id)?.name ?? "Sin departamento" : selectedDepartment?.name ?? "Sin departamento"}</span>
-                    <span className="schedule-mobile-summary mt-1 block text-xs font-normal text-ink md:hidden">
+                    <span className="schedule-mobile-summary mt-1 block text-xs font-normal text-ink lg:hidden">
                       <span>Mes: {summary.monthHours.toFixed(1)} / {summary.monthTarget.toFixed(1)}</span>
                       <span className={summary.diff >= 0 ? "text-moss" : "text-coral"}>
                         Dif.: {summary.diff >= 0 ? "+" : ""}{summary.diff.toFixed(1)} h
