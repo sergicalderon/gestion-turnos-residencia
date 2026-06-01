@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import { ChevronLeft, ChevronRight, RefreshCw, Wand2 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageShell } from "@/components/page-shell";
@@ -27,6 +28,7 @@ export default function SchedulePage() {
   const [yearAssignments, setYearAssignments] = useState<ShiftAssignment[]>([]);
   const [message, setMessage] = useState("");
   const [savingCell, setSavingCell] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
   const [showGenerate, setShowGenerate] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generateForm, setGenerateForm] = useState({
@@ -43,6 +45,10 @@ export default function SchedulePage() {
     () => departments.find((department) => department.id === selectedDepartmentId) ?? null,
     [departments, selectedDepartmentId]
   );
+  const scheduleTableStyle = {
+    "--day-count": days.length,
+    "--schedule-zoom": zoom
+  } as CSSProperties;
 
   const visibleEmployees = useMemo(() => {
     if (selectedDepartmentId === ALL_DEPARTMENTS) return employees;
@@ -203,34 +209,48 @@ export default function SchedulePage() {
       subtitle="Vista tipo Excel para asignar turnos y controlar horas."
       actions={
         <>
-          <GhostButton type="button" onClick={() => moveMonth(-1)}><ChevronLeft className="h-4 w-4" /></GhostButton>
-          <div className="flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold capitalize shadow-subtle">
-            {monthLabel(year, month)}
+          <div className="flex items-center overflow-hidden rounded-md border border-line bg-white shadow-subtle">
+            <GhostButton type="button" onClick={() => moveMonth(-1)} className="min-h-9 rounded-none border-0 border-r border-line px-2 shadow-none"><ChevronLeft className="h-4 w-4" /></GhostButton>
+            <div className="min-w-36 px-3 text-center text-sm font-semibold capitalize">
+              {monthLabel(year, month)}
+            </div>
+            <GhostButton type="button" onClick={() => moveMonth(1)} className="min-h-9 rounded-none border-0 border-l border-line px-2 shadow-none"><ChevronRight className="h-4 w-4" /></GhostButton>
           </div>
-          <GhostButton type="button" onClick={() => moveMonth(1)}><ChevronRight className="h-4 w-4" /></GhostButton>
-          <Select value={year} onChange={(event) => setYear(Number(event.target.value))} className="w-28">
+          <Select value={year} onChange={(event) => setYear(Number(event.target.value))} className="h-9 w-24">
             {Array.from({ length: 7 }, (_, index) => today.getFullYear() - 3 + index).map((optionYear) => (
               <option key={optionYear} value={optionYear}>{optionYear}</option>
             ))}
           </Select>
-          <Select value={selectedDepartmentId} onChange={(event) => changeDepartment(event.target.value)} className="w-56">
+          <Select value={selectedDepartmentId} onChange={(event) => changeDepartment(event.target.value)} className="h-9 w-52">
             <option value={ALL_DEPARTMENTS}>Todos los departamentos</option>
             {departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
           </Select>
-          <Button type="button" onClick={() => setShowGenerate((current) => !current)}><Wand2 className="h-4 w-4" />Generar turnos desde patrones</Button>
-          <GhostButton type="button" onClick={loadData}><RefreshCw className="h-4 w-4" /></GhostButton>
+          <div className="flex items-center overflow-hidden rounded-md border border-line bg-white shadow-subtle" aria-label="Zoom de planilla">
+            {[0.8, 1, 1.2].map((option) => (
+              <button
+                key={option}
+                type="button"
+                className={`min-h-9 px-2.5 text-xs font-semibold transition ${zoom === option ? "bg-ink text-white" : "text-moss hover:bg-paper hover:text-ink"}`}
+                onClick={() => setZoom(option)}
+              >
+                {Math.round(option * 100)}%
+              </button>
+            ))}
+          </div>
+          <Button type="button" onClick={() => setShowGenerate((current) => !current)} className="min-h-9 px-3"><Wand2 className="h-4 w-4" />Generar</Button>
+          <GhostButton type="button" onClick={loadData} className="min-h-9 px-2.5"><RefreshCw className="h-4 w-4" /></GhostButton>
         </>
       }
     >
       {!isSupabaseConfigured ? <Notice>Configura las variables de Supabase para cargar y guardar la planilla.</Notice> : null}
       {message ? <div className="mb-4 rounded-md border border-coral/40 bg-[#fff0ed] px-4 py-3 text-sm">{message}</div> : null}
       {showGenerate ? (
-        <div className="mb-5 rounded-md border border-line bg-white p-4 shadow-subtle">
-          <div className="mb-4 flex items-center justify-between">
+        <div className="mb-3 rounded-md border border-line bg-white p-3 shadow-subtle">
+          <div className="mb-3 flex items-center justify-between">
             <h3 className="font-semibold">Generar turnos desde patrones</h3>
-            <GhostButton type="button" onClick={() => setShowGenerate(false)}>Cerrar</GhostButton>
+            <GhostButton type="button" onClick={() => setShowGenerate(false)} className="min-h-9">Cerrar</GhostButton>
           </div>
-          <div className="grid gap-4 lg:grid-cols-[180px_180px_1fr_auto] lg:items-end">
+          <div className="grid gap-3 lg:grid-cols-[160px_160px_minmax(300px,1fr)_auto] lg:items-end">
             <Field label="Fecha inicio">
               <Input type="date" value={generateForm.start_date} onChange={(event) => setGenerateForm({ ...generateForm, start_date: event.target.value })} />
             </Field>
@@ -277,20 +297,27 @@ export default function SchedulePage() {
           </div>
         </div>
       ) : null}
-      <div className="spreadsheet-scroll overflow-auto rounded-md border border-line bg-white shadow-subtle">
-        <table className="w-full min-w-[1280px] border-collapse text-sm">
+      <div className="spreadsheet-scroll schedule-shell overflow-auto rounded-md border border-line bg-white shadow-subtle">
+        <table className="schedule-table w-full border-collapse text-sm" style={scheduleTableStyle}>
+          <colgroup>
+            <col className="schedule-employee-col" />
+            {days.map((day) => <col key={day.iso} className="schedule-day-col" />)}
+            <col className="schedule-total-col" />
+            <col className="schedule-total-col" />
+            <col className="schedule-diff-col" />
+          </colgroup>
           <thead>
             <tr className="bg-paper">
-              <th className="sticky left-0 z-20 min-w-52 border-b border-r border-line bg-paper px-3 py-2 text-left">Empleado</th>
+              <th className="schedule-employee-header sticky left-0 top-0 z-30 border-b border-r border-line bg-paper px-2 text-left">Empleado</th>
               {days.map((day) => (
-                <th key={day.iso} className="min-w-14 border-b border-r border-line px-1 py-2 text-center">
+                <th key={day.iso} className="schedule-day-header sticky top-0 z-20 border-b border-r border-line bg-paper px-0.5 text-center">
                   <span className="block text-xs uppercase text-moss">{day.weekday}</span>
                   <span className="font-semibold">{day.day}</span>
                 </th>
               ))}
-              <th className="min-w-28 border-b border-r border-line px-3 py-2 text-right">Mes</th>
-              <th className="min-w-32 border-b border-r border-line px-3 py-2 text-right">Año</th>
-              <th className="min-w-32 border-b border-line px-3 py-2 text-right">Diferencia</th>
+              <th className="schedule-summary-header sticky top-0 z-20 border-b border-r border-line bg-paper px-2 text-right">Mes</th>
+              <th className="schedule-summary-header sticky top-0 z-20 border-b border-r border-line bg-paper px-2 text-right">Año</th>
+              <th className="schedule-summary-header sticky top-0 z-20 border-b border-line bg-paper px-2 text-right">Dif.</th>
             </tr>
           </thead>
           <tbody>
@@ -298,19 +325,19 @@ export default function SchedulePage() {
               const summary = employeeSummary(employee);
               return (
                 <tr key={employee.id} className="border-b border-line last:border-0">
-                  <th className="sticky left-0 z-10 border-r border-line bg-white px-3 py-2 text-left font-semibold">
-                    <span className="block">{employee.name}</span>
-                    <span className="text-xs font-normal text-moss">{selectedDepartmentId === ALL_DEPARTMENTS ? departments.find((department) => department.id === employee.department_id)?.name ?? "Sin departamento" : selectedDepartment?.name ?? "Sin departamento"}</span>
+                  <th className="schedule-employee-cell sticky left-0 z-10 border-r border-line bg-white px-2 text-left font-semibold">
+                    <span className="block truncate">{employee.name}</span>
+                    <span className="block truncate text-xs font-normal text-moss">{selectedDepartmentId === ALL_DEPARTMENTS ? departments.find((department) => department.id === employee.department_id)?.name ?? "Sin departamento" : selectedDepartment?.name ?? "Sin departamento"}</span>
                   </th>
                   {days.map((day) => {
                     const key = `${employee.id}-${day.iso}`;
                     const assignment = assignmentByCell.get(key);
                     const shiftType = shiftTypes.find((item) => item.id === assignment?.shift_type_id);
                     return (
-                      <td key={day.iso} className="border-r border-line p-0" style={{ backgroundColor: shiftType?.color ?? "white" }}>
+                      <td key={day.iso} className="schedule-day-cell border-r border-line p-0" style={{ backgroundColor: shiftType?.color ?? "white" }}>
                         <select
                           aria-label={`${employee.name} ${day.iso}`}
-                          className="h-10 w-full min-w-14 bg-transparent px-1 text-center text-xs font-bold outline-none"
+                          className="h-full w-full appearance-none bg-transparent px-0.5 text-center text-xs font-bold outline-none"
                           value={assignment?.shift_type_id ?? ""}
                           disabled={savingCell === key}
                           onChange={(event) => saveAssignment(employee.id, day.iso, event.target.value)}
@@ -323,9 +350,9 @@ export default function SchedulePage() {
                       </td>
                     );
                   })}
-                  <td className="border-r border-line px-3 py-2 text-right">{summary.monthHours.toFixed(1)} / {summary.monthTarget.toFixed(1)}</td>
-                  <td className="border-r border-line px-3 py-2 text-right">{summary.yearHours.toFixed(1)} / {summary.target.toFixed(1)}</td>
-                  <td className={`px-3 py-2 text-right font-semibold ${summary.diff >= 0 ? "text-moss" : "text-coral"}`}>
+                  <td className="schedule-summary-cell border-r border-line px-2 text-right">{summary.monthHours.toFixed(1)} / {summary.monthTarget.toFixed(1)}</td>
+                  <td className="schedule-summary-cell border-r border-line px-2 text-right">{summary.yearHours.toFixed(1)} / {summary.target.toFixed(1)}</td>
+                  <td className={`schedule-summary-cell px-2 text-right font-semibold ${summary.diff >= 0 ? "text-moss" : "text-coral"}`}>
                     {summary.diff >= 0 ? "+" : ""}{summary.diff.toFixed(1)} h
                     {summary.hasMissingWorkload ? <div className="text-xs font-normal text-coral">Sin jornada definida</div> : null}
                   </td>

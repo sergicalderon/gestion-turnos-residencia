@@ -32,3 +32,68 @@ textarea {
   scrollbar-color: #9aa8a0 #edf2ef;
   scrollbar-width: thin;
 }
+
+.schedule-shell {
+  max-height: calc(100vh - 132px);
+}
+
+.schedule-table {
+  --employee-width: clamp(150px, calc(176px * var(--schedule-zoom)), 218px);
+  --summary-width: clamp(78px, calc(92px * var(--schedule-zoom)), 112px);
+  --diff-width: clamp(76px, calc(88px * var(--schedule-zoom)), 108px);
+  --fixed-schedule-width: calc(var(--employee-width) + (var(--summary-width) * 2) + var(--diff-width));
+  --row-height: clamp(28px, calc(34px * var(--schedule-zoom)), 42px);
+  --header-height: clamp(36px, calc(42px * var(--schedule-zoom)), 52px);
+  table-layout: fixed;
+  min-width: 1080px;
+  font-size: clamp(12px, calc(13px * var(--schedule-zoom)), 15px);
+}
+
+.schedule-employee-col {
+  width: var(--employee-width);
+}
+
+.schedule-day-col {
+  width: calc((100% - var(--fixed-schedule-width)) / var(--day-count));
+}
+
+.schedule-total-col {
+  width: var(--summary-width);
+}
+
+.schedule-diff-col {
+  width: var(--diff-width);
+}
+
+.schedule-employee-cell,
+.schedule-day-cell,
+.schedule-summary-cell {
+  height: var(--row-height);
+  max-height: var(--row-height);
+}
+
+.schedule-day-header,
+.schedule-summary-header,
+.schedule-employee-header {
+  height: var(--header-height);
+}
+
+.schedule-day-header span:first-child {
+  font-size: 0.64rem;
+  line-height: 1;
+}
+
+.schedule-day-header span:last-child,
+.schedule-summary-header {
+  line-height: 1.1;
+}
+
+.schedule-summary-cell {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.schedule-table select {
+  cursor: pointer;
+  text-align-last: center;
+}
