@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { LogOut } from "lucide-react";
+import { MobileNavigation } from "@/components/sidebar";
 import { Button, Field, GhostButton, Input, Notice } from "@/components/ui";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase/client";
 
@@ -81,12 +82,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-w-0 flex-1">
-      <div className="flex justify-end border-b border-line bg-white px-4 py-2 lg:hidden">
-        <GhostButton type="button" onClick={signOut}>
-          <LogOut className="h-4 w-4" />
-          Salir
-        </GhostButton>
-      </div>
+      <MobileNavigation onSignOut={signOut} />
       <div className="hidden justify-end border-b border-line bg-white px-6 py-2 lg:flex">
         <GhostButton type="button" onClick={signOut}>
           <LogOut className="h-4 w-4" />
