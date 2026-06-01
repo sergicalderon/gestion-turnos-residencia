@@ -2,19 +2,25 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, RefreshCw, Wand2 } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { PageShell } from "@/components/page-shell";
 import { Button, Field, GhostButton, Input, Notice, Select } from "@/components/ui";
+import { ALL_DEPARTMENTS, departmentSlug, findDepartmentByParam } from "@/lib/departments";
 import { monthDays, monthLabel, monthRange } from "@/lib/dates";
 import { assignmentHours, workloadTargetForExactRange, workloadTargetForRange } from "@/lib/hours";
-import type { Employee, EmployeeWorkloadPeriod, ShiftAssignment, ShiftType } from "@/lib/database.types";
+import type { Department, Employee, EmployeeWorkloadPeriod, ShiftAssignment, ShiftType } from "@/lib/database.types";
 import { generateShiftsFromPatterns } from "@/lib/pattern-generation";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase/client";
 
 export default function SchedulePage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState(ALL_DEPARTMENTS);
   const [workloadPeriods, setWorkloadPeriods] = useState<EmployeeWorkloadPeriod[]>([]);
   const [shiftTypes, setShiftTypes] = useState<ShiftType[]>([]);
   const [monthAssignments, setMonthAssignments] = useState<ShiftAssignment[]>([]);
@@ -33,6 +39,15 @@ export default function SchedulePage() {
 
   const days = useMemo(() => monthDays(year, month), [year, month]);
   const range = useMemo(() => monthRange(year, month), [year, month]);
+  const selectedDepartment = useMemo(
+    () => departments.find((department) => department.id === selectedDepartmentId) ?? null,
+    [departments, selectedDepartmentId]
+  );
+
+  const visibleEmployees = useMemo(() => {
+    if (selectedDepartmentId === ALL_DEPARTMENTS) return employees;
+    return employees.filter((employee) => employee.department_id === selectedDepartmentId);
+  }, [employees, selectedDepartmentId]);
 
   const assignmentByCell = useMemo(() => {
     return new Map(monthAssignments.map((assignment) => [`${assignment.employee_id}-${assignment.date}`, assignment]));
@@ -56,6 +71,7 @@ export default function SchedulePage() {
       .or(`end_date.is.null,end_date.gte.${yearStart}`)
       .order("start_date");
     const { data: typeData, error: typeError } = await supabase.from("shift_types").select("*").order("code");
+    const { data: departmentData, error: departmentError } = await supabase.from("departments").select("*").order("name");
     const { data: monthData, error: monthError } = await supabase
       .from("shift_assignments")
       .select("*")
@@ -67,14 +83,18 @@ export default function SchedulePage() {
       .gte("date", yearStart)
       .lte("date", range.endIso);
 
-    const error = employeeError ?? workloadError ?? typeError ?? monthError ?? yearError;
+    const error = employeeError ?? workloadError ?? typeError ?? departmentError ?? monthError ?? yearError;
     if (error) setMessage(error.message);
     setEmployees(employeeData ?? []);
+    const nextDepartments = departmentData ?? [];
+    setDepartments(nextDepartments);
+    const requestedDepartment = findDepartmentByParam(nextDepartments, searchParams.get("department"));
+    setSelectedDepartmentId((current) => current === ALL_DEPARTMENTS && requestedDepartment ? requestedDepartment.id : current);
     setWorkloadPeriods(workloadData ?? []);
     setShiftTypes(typeData ?? []);
     setMonthAssignments(monthData ?? []);
     setYearAssignments(yearData ?? []);
-  }, [range.endIso, range.startIso, year]);
+  }, [range.endIso, range.startIso, searchParams, year]);
 
   useEffect(() => {
     loadData();
@@ -92,6 +112,27 @@ export default function SchedulePage() {
     const next = new Date(year, month - 1 + delta, 1);
     setYear(next.getFullYear());
     setMonth(next.getMonth() + 1);
+  }
+
+  function changeDepartment(departmentId: string) {
+    setSelectedDepartmentId(departmentId);
+    if (departmentId === ALL_DEPARTMENTS) {
+      router.replace("/");
+      return;
+    }
+    const department = departments.find((item) => item.id === departmentId);
+    router.replace(`/?department=${departmentSlug(department?.name ?? departmentId)}`);
+  }
+
+  function shiftTypeOptionsFor(employee: Employee, currentShiftTypeId?: string) {
+    const options = selectedDepartmentId === ALL_DEPARTMENTS
+      ? shiftTypes
+      : shiftTypes.filter((type) => !type.department_id || type.department_id === employee.department_id);
+    if (currentShiftTypeId && !options.some((type) => type.id === currentShiftTypeId)) {
+      const currentType = shiftTypes.find((type) => type.id === currentShiftTypeId);
+      return currentType ? [...options, currentType] : options;
+    }
+    return options;
   }
 
   async function saveAssignment(employeeId: string, date: string, shiftTypeId: string) {
@@ -126,7 +167,7 @@ export default function SchedulePage() {
       const result = await generateShiftsFromPatterns(supabase, {
         startDate: generateForm.start_date,
         endDate: generateForm.end_date,
-        employeeIds: generateForm.allEmployees ? undefined : generateForm.employeeIds,
+        employeeIds: generateForm.allEmployees ? visibleEmployees.map((employee) => employee.id) : generateForm.employeeIds,
         overwriteExisting: generateForm.overwriteExisting
       });
       setMessage(`Generados ${result.generated} turnos. Omitidos por existentes: ${result.skippedExisting}.`);
@@ -172,6 +213,10 @@ export default function SchedulePage() {
               <option key={optionYear} value={optionYear}>{optionYear}</option>
             ))}
           </Select>
+          <Select value={selectedDepartmentId} onChange={(event) => changeDepartment(event.target.value)} className="w-56">
+            <option value={ALL_DEPARTMENTS}>Todos los departamentos</option>
+            {departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
+          </Select>
           <Button type="button" onClick={() => setShowGenerate((current) => !current)}><Wand2 className="h-4 w-4" />Generar turnos desde patrones</Button>
           <GhostButton type="button" onClick={loadData}><RefreshCw className="h-4 w-4" /></GhostButton>
         </>
@@ -199,7 +244,7 @@ export default function SchedulePage() {
               </label>
               {!generateForm.allEmployees ? (
                 <div className="grid max-h-36 gap-2 overflow-auto rounded-md border border-line p-2">
-                  {employees.map((employee) => (
+                  {visibleEmployees.map((employee) => (
                     <label key={employee.id} className="flex items-center gap-2 text-sm">
                       <input
                         type="checkbox"
@@ -249,13 +294,13 @@ export default function SchedulePage() {
             </tr>
           </thead>
           <tbody>
-            {employees.map((employee) => {
+            {visibleEmployees.map((employee) => {
               const summary = employeeSummary(employee);
               return (
                 <tr key={employee.id} className="border-b border-line last:border-0">
                   <th className="sticky left-0 z-10 border-r border-line bg-white px-3 py-2 text-left font-semibold">
                     <span className="block">{employee.name}</span>
-                    <span className="text-xs font-normal text-moss">{employee.category}</span>
+                    <span className="text-xs font-normal text-moss">{selectedDepartmentId === ALL_DEPARTMENTS ? departments.find((department) => department.id === employee.department_id)?.name ?? "Sin departamento" : selectedDepartment?.name ?? "Sin departamento"}</span>
                   </th>
                   {days.map((day) => {
                     const key = `${employee.id}-${day.iso}`;
@@ -271,7 +316,7 @@ export default function SchedulePage() {
                           onChange={(event) => saveAssignment(employee.id, day.iso, event.target.value)}
                         >
                           <option value=""></option>
-                          {shiftTypes.map((type) => (
+                          {shiftTypeOptionsFor(employee, assignment?.shift_type_id).map((type) => (
                             <option key={type.id} value={type.id}>{type.code}</option>
                           ))}
                         </select>
@@ -289,7 +334,7 @@ export default function SchedulePage() {
             })}
           </tbody>
         </table>
-        {employees.length === 0 ? <div className="px-4 py-8 text-center text-sm text-moss">No hay empleados activos para este mes.</div> : null}
+        {visibleEmployees.length === 0 ? <div className="px-4 py-8 text-center text-sm text-moss">No hay empleados activos para este mes.</div> : null}
       </div>
     </PageShell>
   );

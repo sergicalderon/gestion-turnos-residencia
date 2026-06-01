@@ -3,23 +3,28 @@
 import { useEffect, useState } from "react";
 import { Plus, Save, Trash2 } from "lucide-react";
 import { PageShell } from "@/components/page-shell";
-import { Button, Field, GhostButton, Input, Notice } from "@/components/ui";
-import type { ShiftType } from "@/lib/database.types";
+import { Button, Field, GhostButton, Input, Notice, Select } from "@/components/ui";
+import type { Department, ShiftType } from "@/lib/database.types";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase/client";
 
-const emptyForm = { code: "", name: "", computable_hours: 0, color: "#d9efe5" };
+const emptyForm = { code: "", name: "", computable_hours: 0, color: "#d9efe5", department_id: "" };
 
 export default function ShiftTypesPage() {
   const [shiftTypes, setShiftTypes] = useState<ShiftType[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
 
   async function loadShiftTypes() {
     if (!supabase) return;
-    const { data, error } = await supabase.from("shift_types").select("*").order("code");
-    if (error) setMessage(error.message);
+    const [{ data, error }, { data: departmentData, error: departmentError }] = await Promise.all([
+      supabase.from("shift_types").select("*").order("code"),
+      supabase.from("departments").select("*").order("name")
+    ]);
+    if (error ?? departmentError) setMessage((error ?? departmentError)?.message ?? "");
     setShiftTypes(data ?? []);
+    setDepartments(departmentData ?? []);
   }
 
   useEffect(() => {
@@ -32,7 +37,8 @@ export default function ShiftTypesPage() {
       code: form.code.trim().toUpperCase(),
       name: form.name.trim(),
       computable_hours: Number(form.computable_hours),
-      color: form.color
+      color: form.color,
+      department_id: form.department_id || null
     };
     const result = editingId ? await supabase.from("shift_types").update(payload).eq("id", editingId) : await supabase.from("shift_types").insert(payload);
     if (result.error) setMessage(result.error.message);
@@ -65,6 +71,12 @@ export default function ShiftTypesPage() {
             <Field label="Nombre"><Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></Field>
             <Field label="Horas computables"><Input type="number" min="0" step="0.25" value={form.computable_hours} onChange={(event) => setForm({ ...form, computable_hours: Number(event.target.value) })} /></Field>
             <Field label="Color"><Input type="color" value={form.color} onChange={(event) => setForm({ ...form, color: event.target.value })} /></Field>
+            <Field label="Departamento">
+              <Select value={form.department_id} onChange={(event) => setForm({ ...form, department_id: event.target.value })}>
+                <option value="">Global</option>
+                {departments.filter((department) => department.is_active).map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
+              </Select>
+            </Field>
             <Button type="button" disabled={!form.code || !form.name} onClick={save}>
               {editingId ? <Save className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
               Guardar
@@ -76,9 +88,9 @@ export default function ShiftTypesPage() {
           {shiftTypes.map((shiftType) => (
             <div key={shiftType.id} className="grid grid-cols-[72px_1fr_120px_auto] items-center gap-3 rounded-md border border-line bg-white px-3 py-2 shadow-subtle">
               <span className="rounded px-2 py-1 text-center text-sm font-bold" style={{ backgroundColor: shiftType.color }}>{shiftType.code}</span>
-              <button className="text-left" type="button" onClick={() => { setEditingId(shiftType.id); setForm({ code: shiftType.code, name: shiftType.name, computable_hours: Number(shiftType.computable_hours), color: shiftType.color }); }}>
+              <button className="text-left" type="button" onClick={() => { setEditingId(shiftType.id); setForm({ code: shiftType.code, name: shiftType.name, computable_hours: Number(shiftType.computable_hours), color: shiftType.color, department_id: shiftType.department_id ?? "" }); }}>
                 <span className="block font-medium">{shiftType.name}</span>
-                <span className="text-sm text-moss">{shiftType.color}</span>
+                <span className="text-sm text-moss">{departments.find((department) => department.id === shiftType.department_id)?.name ?? "Global"} · {shiftType.color}</span>
               </button>
               <span className="text-sm">{shiftType.computable_hours} h</span>
               <GhostButton type="button" onClick={() => remove(shiftType)}><Trash2 className="h-4 w-4" /></GhostButton>

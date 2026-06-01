@@ -1,15 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { DepartmentBadge } from "@/components/department-badge";
 import { PageShell } from "@/components/page-shell";
 import { Notice, Select } from "@/components/ui";
+import { ALL_DEPARTMENTS } from "@/lib/departments";
 import {
   annualTargetByPeriods,
   assignmentHours,
   currentWorkloadPercentage,
   proportionalTargetByPeriodsUntilDate
 } from "@/lib/hours";
-import type { Employee, EmployeeWorkloadPeriod, ShiftAssignment, ShiftType } from "@/lib/database.types";
+import type { Department, Employee, EmployeeWorkloadPeriod, ShiftAssignment, ShiftType } from "@/lib/database.types";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase/client";
 
 function localIsoDate(date: Date) {
@@ -25,6 +27,8 @@ export default function AnnualSummaryPage() {
   const todayIso = localIsoDate(today);
   const [year, setYear] = useState(currentYear);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [departmentFilter, setDepartmentFilter] = useState(ALL_DEPARTMENTS);
   const [workloadPeriods, setWorkloadPeriods] = useState<EmployeeWorkloadPeriod[]>([]);
   const [shiftTypes, setShiftTypes] = useState<ShiftType[]>([]);
   const [assignments, setAssignments] = useState<ShiftAssignment[]>([]);
@@ -33,6 +37,7 @@ export default function AnnualSummaryPage() {
   const loadData = useCallback(async () => {
     if (!supabase) return;
     const { data: employeeData, error: employeeError } = await supabase.from("employees").select("*").order("name");
+    const { data: departmentData, error: departmentError } = await supabase.from("departments").select("*").order("name");
     const { data: workloadData, error: workloadError } = await supabase
       .from("employee_workload_periods")
       .select("*")
@@ -45,9 +50,10 @@ export default function AnnualSummaryPage() {
       .select("*")
       .gte("date", `${year}-01-01`)
       .lte("date", `${year}-12-31`);
-    const error = employeeError ?? workloadError ?? typeError ?? assignmentError;
+    const error = employeeError ?? departmentError ?? workloadError ?? typeError ?? assignmentError;
     if (error) setMessage(error.message);
     setEmployees(employeeData ?? []);
+    setDepartments(departmentData ?? []);
     setWorkloadPeriods(workloadData ?? []);
     setShiftTypes(typeData ?? []);
     setAssignments(assignmentData ?? []);
@@ -57,8 +63,15 @@ export default function AnnualSummaryPage() {
     loadData();
   }, [loadData]);
 
+  const departmentById = useMemo(() => new Map(departments.map((department) => [department.id, department])), [departments]);
+
+  const visibleEmployees = useMemo(() => {
+    if (departmentFilter === ALL_DEPARTMENTS) return employees;
+    return employees.filter((employee) => employee.department_id === departmentFilter);
+  }, [departmentFilter, employees]);
+
   const rows = useMemo(() => {
-    return employees.map((employee) => {
+    return visibleEmployees.map((employee) => {
       const employeeAssignments = assignments.filter((assignment) => assignment.employee_id === employee.id);
       const employeePeriods = workloadPeriods.filter((period) => period.employee_id === employee.id);
       const hours = assignmentHours(employeeAssignments, shiftTypes);
@@ -66,10 +79,10 @@ export default function AnnualSummaryPage() {
       const currentWorkload = currentWorkloadPercentage(employeePeriods, today);
       return { employee, hours, target: targetResult.target, diff: hours - targetResult.target, currentWorkload, missingRanges: targetResult.missingRanges };
     });
-  }, [employees, assignments, shiftTypes, workloadPeriods, today, year]);
+  }, [visibleEmployees, assignments, shiftTypes, workloadPeriods, today, year]);
 
   const trackingRows = useMemo(() => {
-    return employees.map((employee) => {
+    return visibleEmployees.map((employee) => {
       const employeeAssignments = assignments.filter((assignment) => assignment.employee_id === employee.id && assignment.date <= todayIso);
       const employeePeriods = workloadPeriods.filter((period) => period.employee_id === employee.id);
       const hours = assignmentHours(employeeAssignments, shiftTypes);
@@ -77,18 +90,24 @@ export default function AnnualSummaryPage() {
       const currentWorkload = currentWorkloadPercentage(employeePeriods, today);
       return { employee, hours, target: targetResult.target, diff: hours - targetResult.target, currentWorkload, missingRanges: targetResult.missingRanges };
     });
-  }, [employees, assignments, shiftTypes, workloadPeriods, today, todayIso, year]);
+  }, [visibleEmployees, assignments, shiftTypes, workloadPeriods, today, todayIso, year]);
 
   return (
     <PageShell
       title="Resumen anual"
       subtitle="Horas planificadas del año completo frente al objetivo anual."
       actions={
-        <Select value={year} onChange={(event) => setYear(Number(event.target.value))} className="w-32">
-          {Array.from({ length: 7 }, (_, index) => currentYear - 3 + index).map((optionYear) => (
-            <option key={optionYear} value={optionYear}>{optionYear}</option>
-          ))}
-        </Select>
+        <>
+          <Select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)} className="w-56">
+            <option value={ALL_DEPARTMENTS}>Todos los departamentos</option>
+            {departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
+          </Select>
+          <Select value={year} onChange={(event) => setYear(Number(event.target.value))} className="w-32">
+            {Array.from({ length: 7 }, (_, index) => currentYear - 3 + index).map((optionYear) => (
+              <option key={optionYear} value={optionYear}>{optionYear}</option>
+            ))}
+          </Select>
+        </>
       }
     >
       {!isSupabaseConfigured ? <Notice>Configura las variables de Supabase para activar esta pantalla.</Notice> : null}
@@ -103,7 +122,7 @@ export default function AnnualSummaryPage() {
             <thead className="bg-paper text-left text-xs uppercase tracking-wide text-moss">
               <tr>
                 <th className="border-b border-line px-3 py-3">Empleado</th>
-                <th className="border-b border-line px-3 py-3">Categoría</th>
+                <th className="border-b border-line px-3 py-3">Departamento</th>
                 <th className="border-b border-line px-3 py-3 text-right">Jornada</th>
                 <th className="border-b border-line px-3 py-3 text-right">Horas planificadas</th>
                 <th className="border-b border-line px-3 py-3 text-right">Objetivo anual</th>
@@ -114,7 +133,7 @@ export default function AnnualSummaryPage() {
               {rows.map(({ employee, hours, target, diff, currentWorkload, missingRanges }) => (
                 <tr key={employee.id} className="border-b border-line last:border-0">
                   <td className="px-3 py-3 font-medium">{employee.name}</td>
-                  <td className="px-3 py-3">{employee.category}</td>
+                  <td className="px-3 py-3"><DepartmentBadge department={departmentById.get(employee.department_id ?? "")} /></td>
                   <td className="px-3 py-3 text-right">
                     {currentWorkload ? `${currentWorkload}%` : "Sin jornada"}
                     {missingRanges.length > 0 ? <div className="text-xs text-coral">Sin jornada definida para este periodo</div> : null}
@@ -141,7 +160,7 @@ export default function AnnualSummaryPage() {
             <thead className="bg-paper text-left text-xs uppercase tracking-wide text-moss">
               <tr>
                 <th className="border-b border-line px-3 py-3">Empleado</th>
-                <th className="border-b border-line px-3 py-3">Categoría</th>
+                <th className="border-b border-line px-3 py-3">Departamento</th>
                 <th className="border-b border-line px-3 py-3 text-right">Jornada</th>
                 <th className="border-b border-line px-3 py-3 text-right">Horas acumuladas</th>
                 <th className="border-b border-line px-3 py-3 text-right">Objetivo proporcional</th>
@@ -152,7 +171,7 @@ export default function AnnualSummaryPage() {
               {trackingRows.map(({ employee, hours, target, diff, currentWorkload, missingRanges }) => (
                 <tr key={employee.id} className="border-b border-line last:border-0">
                   <td className="px-3 py-3 font-medium">{employee.name}</td>
-                  <td className="px-3 py-3">{employee.category}</td>
+                  <td className="px-3 py-3"><DepartmentBadge department={departmentById.get(employee.department_id ?? "")} /></td>
                   <td className="px-3 py-3 text-right">
                     {currentWorkload ? `${currentWorkload}%` : "Sin jornada"}
                     {missingRanges.length > 0 ? <div className="text-xs text-coral">Sin jornada definida para este periodo</div> : null}

@@ -2,17 +2,19 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Archive, Check, Pencil, Plus, Save, Trash2, X } from "lucide-react";
+import { DepartmentBadge } from "@/components/department-badge";
 import { PageShell } from "@/components/page-shell";
-import { Button, Field, GhostButton, Input, Notice, Textarea } from "@/components/ui";
+import { Button, Field, GhostButton, Input, Notice, Select, Textarea } from "@/components/ui";
+import { ALL_DEPARTMENTS, activeDepartmentOptions } from "@/lib/departments";
 import { currentWorkloadPercentage } from "@/lib/hours";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
-import type { Employee, EmployeeWorkloadPeriod } from "@/lib/database.types";
+import type { Department, Employee, EmployeeWorkloadPeriod } from "@/lib/database.types";
 
 const todayIso = new Date().toISOString().slice(0, 10);
 
 const emptyForm = {
   name: "",
-  category: "",
+  department_id: "",
   workday_percentage: 100,
   start_date: todayIso,
   end_date: "",
@@ -34,7 +36,9 @@ function formatPeriod(period: EmployeeWorkloadPeriod) {
 
 export default function EmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [workloadPeriods, setWorkloadPeriods] = useState<EmployeeWorkloadPeriod[]>([]);
+  const [departmentFilter, setDepartmentFilter] = useState(ALL_DEPARTMENTS);
   const [form, setForm] = useState(emptyForm);
   const [periodForm, setPeriodForm] = useState(emptyPeriodForm);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -45,19 +49,23 @@ export default function EmployeesPage() {
 
   async function loadData() {
     if (!supabase) return;
-    const { data: employeeData, error: employeeError } = await supabase
+    const [{ data: employeeData, error: employeeError }, { data: departmentData, error: departmentError }] = await Promise.all([
+      supabase
       .from("employees")
       .select("*")
       .order("active", { ascending: false })
-      .order("name");
+      .order("name"),
+      supabase.from("departments").select("*").order("is_active", { ascending: false }).order("name")
+    ]);
     const { data: periodData, error: periodError } = await supabase
       .from("employee_workload_periods")
       .select("*")
       .order("start_date");
-    const error = employeeError ?? periodError;
+    const error = employeeError ?? departmentError ?? periodError;
     if (error) setMessage(error.message);
     const nextEmployees = employeeData ?? [];
     setEmployees(nextEmployees);
+    setDepartments(departmentData ?? []);
     setWorkloadPeriods(periodData ?? []);
     setSelectedEmployeeId((current) => current ?? nextEmployees[0]?.id ?? null);
   }
@@ -70,6 +78,15 @@ export default function EmployeesPage() {
     () => employees.find((employee) => employee.id === selectedEmployeeId) ?? null,
     [employees, selectedEmployeeId]
   );
+
+  const departmentById = useMemo(() => new Map(departments.map((department) => [department.id, department])), [departments]);
+
+  const activeDepartments = useMemo(() => activeDepartmentOptions(departments), [departments]);
+
+  const visibleEmployees = useMemo(() => {
+    if (departmentFilter === ALL_DEPARTMENTS) return employees;
+    return employees.filter((employee) => employee.department_id === departmentFilter);
+  }, [departmentFilter, employees]);
 
   const selectedPeriods = useMemo(
     () => workloadPeriods.filter((period) => period.employee_id === selectedEmployeeId),
@@ -99,7 +116,7 @@ export default function EmployeesPage() {
     setSelectedEmployeeId(employee.id);
     setForm({
       name: employee.name,
-      category: employee.category,
+      department_id: employee.department_id ?? "",
       workday_percentage: Number(employee.workday_percentage),
       start_date: employee.start_date,
       end_date: employee.end_date ?? "",
@@ -125,7 +142,8 @@ export default function EmployeesPage() {
     setMessage("");
     const payload = {
       name: form.name.trim(),
-      category: form.category.trim(),
+      category: departmentById.get(form.department_id)?.name ?? "",
+      department_id: form.department_id || null,
       workday_percentage: Number(form.workday_percentage),
       start_date: form.start_date,
       end_date: form.end_date || null,
@@ -243,7 +261,15 @@ export default function EmployeesPage() {
           </div>
           <div className="grid gap-3">
             <Field label="Nombre"><Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></Field>
-            <Field label="Categoría"><Input value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} /></Field>
+            <Field label="Departamento">
+              <Select value={form.department_id} onChange={(event) => setForm({ ...form, department_id: event.target.value })}>
+                <option value="">Selecciona departamento</option>
+                {activeDepartments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
+                {editingId && form.department_id && !activeDepartments.some((department) => department.id === form.department_id) ? (
+                  <option value={form.department_id}>{departmentById.get(form.department_id)?.name ?? "Departamento inactivo"}</option>
+                ) : null}
+              </Select>
+            </Field>
             <Field label="Jornada inicial / actual"><Input type="number" min="1" value={form.workday_percentage} onChange={(event) => setForm({ ...form, workday_percentage: Number(event.target.value) })} /></Field>
             <Field label="Fecha alta"><Input type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} /></Field>
             <Field label="Fecha baja"><Input type="date" value={form.end_date} onChange={(event) => setForm({ ...form, end_date: event.target.value })} /></Field>
@@ -252,7 +278,7 @@ export default function EmployeesPage() {
               <input type="checkbox" checked={form.active} onChange={(event) => setForm({ ...form, active: event.target.checked })} />
               Activo
             </label>
-            <Button type="button" disabled={loading || !form.name || !form.category || !form.start_date} onClick={save}>
+            <Button type="button" disabled={loading || !form.name || !form.department_id || !form.start_date} onClick={save}>
               {editingId ? <Save className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
               Guardar
             </Button>
@@ -260,12 +286,20 @@ export default function EmployeesPage() {
         </form>
 
         <div className="grid gap-5">
+          <div className="rounded-md border border-line bg-white p-4 shadow-subtle">
+            <Field label="Filtrar por departamento">
+              <Select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)}>
+                <option value={ALL_DEPARTMENTS}>Todos los departamentos</option>
+                {departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
+              </Select>
+            </Field>
+          </div>
           <div className="overflow-auto rounded-md border border-line bg-white shadow-subtle">
             <table className="min-w-[900px] w-full border-collapse text-sm">
               <thead className="bg-paper text-left text-xs uppercase tracking-wide text-moss">
                 <tr>
                   <th className="border-b border-line px-3 py-3">Nombre</th>
-                  <th className="border-b border-line px-3 py-3">Categoría</th>
+                  <th className="border-b border-line px-3 py-3">Departamento</th>
                   <th className="border-b border-line px-3 py-3">Jornada actual</th>
                   <th className="border-b border-line px-3 py-3">Alta</th>
                   <th className="border-b border-line px-3 py-3">Baja</th>
@@ -274,13 +308,13 @@ export default function EmployeesPage() {
                 </tr>
               </thead>
               <tbody>
-                {employees.map((employee) => {
+                {visibleEmployees.map((employee) => {
                   const employeePeriods = workloadPeriods.filter((period) => period.employee_id === employee.id);
                   const rowCurrentWorkload = currentWorkloadPercentage(employeePeriods);
                   return (
                     <tr key={employee.id} className="border-b border-line last:border-0">
                       <td className="px-3 py-3 font-medium">{employee.name}</td>
-                      <td className="px-3 py-3">{employee.category}</td>
+                      <td className="px-3 py-3"><DepartmentBadge department={departmentById.get(employee.department_id ?? "")} /></td>
                       <td className="px-3 py-3">{rowCurrentWorkload ? `${rowCurrentWorkload}%` : "Sin jornada"}</td>
                       <td className="px-3 py-3">{employee.start_date}</td>
                       <td className="px-3 py-3">{employee.end_date ?? "-"}</td>

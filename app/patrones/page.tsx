@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Plus, Save, Trash2 } from "lucide-react";
 import { PageShell } from "@/components/page-shell";
 import { Button, Field, GhostButton, Input, Notice, Select, Textarea } from "@/components/ui";
-import type { Employee, EmployeeShiftPattern, ShiftPattern, ShiftPatternDay, ShiftType } from "@/lib/database.types";
+import { ALL_DEPARTMENTS } from "@/lib/departments";
+import type { Department, Employee, EmployeeShiftPattern, ShiftPattern, ShiftPatternDay, ShiftType } from "@/lib/database.types";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase/client";
 
 const todayIso = new Date().toISOString().slice(0, 10);
@@ -13,6 +14,7 @@ type PatternForm = {
   name: string;
   description: string;
   is_active: boolean;
+  department_id: string;
   days: string[];
 };
 
@@ -20,6 +22,7 @@ const emptyPattern: PatternForm = {
   name: "",
   description: "",
   is_active: true,
+  department_id: "",
   days: []
 };
 
@@ -27,6 +30,8 @@ export default function PatternsPage() {
   const [patterns, setPatterns] = useState<ShiftPattern[]>([]);
   const [patternDays, setPatternDays] = useState<ShiftPatternDay[]>([]);
   const [shiftTypes, setShiftTypes] = useState<ShiftType[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [departmentFilter, setDepartmentFilter] = useState(ALL_DEPARTMENTS);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [assignments, setAssignments] = useState<EmployeeShiftPattern[]>([]);
   const [selectedPatternId, setSelectedPatternId] = useState<string | null>(null);
@@ -45,6 +50,29 @@ export default function PatternsPage() {
   const shiftTypeById = useMemo(() => new Map(shiftTypes.map((type) => [type.id, type])), [shiftTypes]);
   const employeeById = useMemo(() => new Map(employees.map((employee) => [employee.id, employee])), [employees]);
   const patternById = useMemo(() => new Map(patterns.map((pattern) => [pattern.id, pattern])), [patterns]);
+  const departmentById = useMemo(() => new Map(departments.map((department) => [department.id, department])), [departments]);
+  const visibleEmployees = useMemo(() => {
+    if (departmentFilter === ALL_DEPARTMENTS) return employees;
+    return employees.filter((employee) => employee.department_id === departmentFilter);
+  }, [departmentFilter, employees]);
+  const visiblePatterns = useMemo(() => {
+    if (departmentFilter === ALL_DEPARTMENTS) return patterns;
+    return patterns.filter((pattern) => !pattern.department_id || pattern.department_id === departmentFilter);
+  }, [departmentFilter, patterns]);
+  const patternShiftTypes = useMemo(() => {
+    return shiftTypes.filter((type) => !type.department_id || !patternForm.department_id || type.department_id === patternForm.department_id);
+  }, [patternForm.department_id, shiftTypes]);
+  const selectedAssignmentEmployee = useMemo(
+    () => employees.find((employee) => employee.id === assignmentForm.employee_id) ?? null,
+    [assignmentForm.employee_id, employees]
+  );
+  const assignmentPatterns = useMemo(() => {
+    return patterns.filter((pattern) => !pattern.department_id || !selectedAssignmentEmployee?.department_id || pattern.department_id === selectedAssignmentEmployee.department_id);
+  }, [patterns, selectedAssignmentEmployee?.department_id]);
+  const visibleAssignments = useMemo(() => {
+    if (departmentFilter === ALL_DEPARTMENTS) return assignments;
+    return assignments.filter((assignment) => employeeById.get(assignment.employee_id)?.department_id === departmentFilter);
+  }, [assignments, departmentFilter, employeeById]);
 
   async function loadData() {
     if (!supabase) return;
@@ -53,20 +81,23 @@ export default function PatternsPage() {
       { data: patternData, error: patternError },
       { data: dayData, error: dayError },
       { data: shiftTypeData, error: shiftTypeError },
+      { data: departmentData, error: departmentError },
       { data: employeeData, error: employeeError },
       { data: assignmentData, error: assignmentError }
     ] = await Promise.all([
       supabase.from("shift_patterns").select("*").order("name"),
       supabase.from("shift_pattern_days").select("*").order("day_index"),
       supabase.from("shift_types").select("*").order("code"),
+      supabase.from("departments").select("*").order("name"),
       supabase.from("employees").select("*").order("name"),
       supabase.from("employee_shift_patterns").select("*").order("start_date", { ascending: false })
     ]);
-    const error = patternError ?? dayError ?? shiftTypeError ?? employeeError ?? assignmentError;
+    const error = patternError ?? dayError ?? shiftTypeError ?? departmentError ?? employeeError ?? assignmentError;
     if (error) setMessage(error.message);
     setPatterns(patternData ?? []);
     setPatternDays(dayData ?? []);
     setShiftTypes(shiftTypeData ?? []);
+    setDepartments(departmentData ?? []);
     setEmployees(employeeData ?? []);
     setAssignments(assignmentData ?? []);
 
@@ -91,6 +122,7 @@ export default function PatternsPage() {
       name: pattern.name,
       description: pattern.description,
       is_active: pattern.is_active,
+      department_id: pattern.department_id ?? "",
       days
     });
   }
@@ -123,7 +155,8 @@ export default function PatternsPage() {
     const payload = {
       name: patternForm.name.trim(),
       description: patternForm.description.trim(),
-      is_active: patternForm.is_active
+      is_active: patternForm.is_active,
+      department_id: patternForm.department_id || null
     };
     const patternResult = selectedPatternId
       ? await supabase.from("shift_patterns").update(payload).eq("id", selectedPatternId).select("*").single()
@@ -201,13 +234,21 @@ export default function PatternsPage() {
     <PageShell title="Patrones de turno" subtitle="Ciclos repetitivos y asignacion a empleados.">
       {!isSupabaseConfigured ? <Notice>Configura Supabase para usar patrones.</Notice> : null}
       {message ? <div className="mb-4 rounded-md border border-coral/40 bg-[#fff0ed] px-4 py-3 text-sm">{message}</div> : null}
+      <div className="mb-5 rounded-md border border-line bg-white p-4 shadow-subtle">
+        <Field label="Filtrar por departamento">
+          <Select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)}>
+            <option value={ALL_DEPARTMENTS}>Todos los departamentos</option>
+            {departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
+          </Select>
+        </Field>
+      </div>
       <div className="grid gap-5 xl:grid-cols-[360px_1fr]">
         <div className="grid content-start gap-2">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold">Listado</h3>
             <GhostButton type="button" onClick={resetPattern}><Plus className="h-4 w-4" />Nuevo</GhostButton>
           </div>
-          {patterns.map((pattern) => {
+          {visiblePatterns.map((pattern) => {
             const days = patternDays.filter((day) => day.pattern_id === pattern.id);
             return (
               <button
@@ -217,7 +258,7 @@ export default function PatternsPage() {
                 onClick={() => selectPattern(pattern)}
               >
                 <span className="block font-semibold">{pattern.name}</span>
-                <span className="text-sm text-moss">{days.length} dias · {pattern.is_active ? "Activo" : "Inactivo"}</span>
+                <span className="text-sm text-moss">{departmentById.get(pattern.department_id ?? "")?.name ?? "Global"} · {days.length} dias · {pattern.is_active ? "Activo" : "Inactivo"}</span>
               </button>
             );
           })}
@@ -231,6 +272,12 @@ export default function PatternsPage() {
             </div>
             <div className="grid gap-3">
               <Field label="Nombre"><Input value={patternForm.name} onChange={(event) => setPatternForm({ ...patternForm, name: event.target.value })} /></Field>
+              <Field label="Departamento">
+                <Select value={patternForm.department_id} onChange={(event) => setPatternForm({ ...patternForm, department_id: event.target.value })}>
+                  <option value="">Global</option>
+                  {departments.filter((department) => department.is_active).map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
+                </Select>
+              </Field>
               <Field label="Descripcion"><Textarea value={patternForm.description} onChange={(event) => setPatternForm({ ...patternForm, description: event.target.value })} /></Field>
               <label className="flex items-center gap-2 text-sm font-medium">
                 <input type="checkbox" checked={patternForm.is_active} onChange={(event) => setPatternForm({ ...patternForm, is_active: event.target.checked })} />
@@ -239,13 +286,13 @@ export default function PatternsPage() {
               <div className="grid gap-2">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-semibold">Dias del ciclo</span>
-                  <GhostButton type="button" onClick={() => setPatternForm({ ...patternForm, days: [...patternForm.days, shiftTypes[0]?.id ?? ""] })}>Añadir dia</GhostButton>
+                  <GhostButton type="button" onClick={() => setPatternForm({ ...patternForm, days: [...patternForm.days, patternShiftTypes[0]?.id ?? ""] })}>Añadir dia</GhostButton>
                 </div>
                 {patternForm.days.map((shiftTypeId, index) => (
                   <div key={`${index}-${shiftTypeId}`} className="grid grid-cols-[72px_1fr_auto] items-center gap-2">
                     <span className="text-sm text-moss">Dia {index + 1}</span>
                     <Select value={shiftTypeId} onChange={(event) => updateDay(index, event.target.value)}>
-                      {shiftTypes.map((type) => <option key={type.id} value={type.id}>{type.code} · {type.name}</option>)}
+                      {patternShiftTypes.map((type) => <option key={type.id} value={type.id}>{type.code} · {type.name}</option>)}
                     </Select>
                     <GhostButton type="button" onClick={() => setPatternForm({ ...patternForm, days: patternForm.days.filter((_day, dayIndex) => dayIndex !== index) })}>
                       <Trash2 className="h-4 w-4" />
@@ -266,12 +313,12 @@ export default function PatternsPage() {
               <div className="grid gap-3">
                 <Field label="Empleado">
                   <Select value={assignmentForm.employee_id} onChange={(event) => setAssignmentForm({ ...assignmentForm, employee_id: event.target.value })}>
-                    {employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}
+                    {visibleEmployees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}
                   </Select>
                 </Field>
                 <Field label="Patron">
                   <Select value={assignmentForm.pattern_id} onChange={(event) => setAssignmentForm({ ...assignmentForm, pattern_id: event.target.value })}>
-                    {patterns.map((pattern) => <option key={pattern.id} value={pattern.id}>{pattern.name}</option>)}
+                    {assignmentPatterns.map((pattern) => <option key={pattern.id} value={pattern.id}>{pattern.name}</option>)}
                   </Select>
                 </Field>
                 <Field label="Fecha inicio"><Input type="date" value={assignmentForm.start_date} onChange={(event) => setAssignmentForm({ ...assignmentForm, start_date: event.target.value })} /></Field>
@@ -301,7 +348,7 @@ export default function PatternsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {assignments.map((assignment) => (
+                  {visibleAssignments.map((assignment) => (
                     <tr key={assignment.id} className="border-b border-line last:border-0">
                       <td className="px-3 py-3 font-medium">{employeeById.get(assignment.employee_id)?.name}</td>
                       <td className="px-3 py-3">{patternById.get(assignment.pattern_id)?.name}</td>

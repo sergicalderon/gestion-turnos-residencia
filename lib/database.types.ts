@@ -8,6 +8,7 @@ export type Database = {
           id: string;
           name: string;
           category: string;
+          department_id: string | null;
           workday_percentage: number;
           start_date: string;
           end_date: string | null;
@@ -19,7 +20,8 @@ export type Database = {
         Insert: {
           id?: string;
           name: string;
-          category: string;
+          category?: string;
+          department_id?: string | null;
           workday_percentage?: number;
           start_date: string;
           end_date?: string | null;
@@ -29,7 +31,63 @@ export type Database = {
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["employees"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "employees_department_id_fkey";
+            columns: ["department_id"];
+            isOneToOne: false;
+            referencedRelation: "departments";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      departments: {
+        Row: {
+          id: string;
+          name: string;
+          description: string | null;
+          color: string | null;
+          is_active: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          name: string;
+          description?: string | null;
+          color?: string | null;
+          is_active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["departments"]["Insert"]>;
         Relationships: [];
+      };
+      user_departments: {
+        Row: {
+          id: string;
+          user_id: string;
+          department_id: string;
+          role: "admin" | "coordinator" | "viewer";
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          department_id: string;
+          role?: "admin" | "coordinator" | "viewer";
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["user_departments"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "user_departments_department_id_fkey";
+            columns: ["department_id"];
+            isOneToOne: false;
+            referencedRelation: "departments";
+            referencedColumns: ["id"];
+          }
+        ];
       };
       employee_workload_periods: {
         Row: {
@@ -72,6 +130,7 @@ export type Database = {
           name: string;
           computable_hours: number;
           color: string;
+          department_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -81,11 +140,20 @@ export type Database = {
           name: string;
           computable_hours?: number;
           color?: string;
+          department_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["shift_types"]["Insert"]>;
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "shift_types_department_id_fkey";
+            columns: ["department_id"];
+            isOneToOne: false;
+            referencedRelation: "departments";
+            referencedColumns: ["id"];
+          }
+        ];
       };
       shift_assignments: {
         Row: {
@@ -134,6 +202,7 @@ export type Database = {
           name: string;
           description: string;
           is_active: boolean;
+          department_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -142,11 +211,20 @@ export type Database = {
           name: string;
           description?: string;
           is_active?: boolean;
+          department_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["shift_patterns"]["Insert"]>;
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "shift_patterns_department_id_fkey";
+            columns: ["department_id"];
+            isOneToOne: false;
+            referencedRelation: "departments";
+            referencedColumns: ["id"];
+          }
+        ];
       };
       shift_pattern_days: {
         Row: {
@@ -272,6 +350,8 @@ export type Database = {
 };
 
 export type Employee = Database["public"]["Tables"]["employees"]["Row"];
+export type Department = Database["public"]["Tables"]["departments"]["Row"];
+export type UserDepartment = Database["public"]["Tables"]["user_departments"]["Row"];
 export type EmployeeWorkloadPeriod = Database["public"]["Tables"]["employee_workload_periods"]["Row"];
 export type ShiftType = Database["public"]["Tables"]["shift_types"]["Row"];
 export type ShiftAssignment = Database["public"]["Tables"]["shift_assignments"]["Row"];

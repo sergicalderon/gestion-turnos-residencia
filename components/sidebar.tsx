@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CalendarDays, ClipboardList, LayoutGrid, Plane, Repeat, UsersRound } from "lucide-react";
+import { CalendarDays, ClipboardList, LayoutGrid, Plane, Repeat, Shapes, UsersRound } from "lucide-react";
 import clsx from "clsx";
 
 const navItems = [
   { href: "/", label: "Planilla", icon: LayoutGrid },
   { href: "/empleados", label: "Empleados", icon: UsersRound },
+  { href: "/departamentos", label: "Departamentos", icon: Shapes },
   { href: "/tipos-turno", label: "Tipos de turno", icon: ClipboardList },
   { href: "/patrones", label: "Patrones de turno", icon: Repeat },
   { href: "/vacaciones", label: "Vacaciones", icon: Plane },
