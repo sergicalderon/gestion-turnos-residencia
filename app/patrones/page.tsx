@@ -6,9 +6,11 @@ import { PageShell } from "@/components/page-shell";
 import { Button, Field, GhostButton, Input, Notice, Select, Textarea } from "@/components/ui";
 import { ALL_DEPARTMENTS } from "@/lib/departments";
 import type { Department, Employee, EmployeeShiftPattern, ShiftPattern, ShiftPatternDay, ShiftType } from "@/lib/database.types";
+import { patternCycleStats, simulatePatternYear } from "@/lib/pattern-analytics";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase/client";
 
 const todayIso = new Date().toISOString().slice(0, 10);
+const currentYear = new Date().getFullYear();
 
 type PatternForm = {
   name: string;
@@ -44,10 +46,28 @@ export default function PatternsPage() {
     start_day_index: 0,
     is_active: true
   });
+  const [simulationForm, setSimulationForm] = useState({
+    year: currentYear,
+    start_date: `${currentYear}-01-01`,
+    start_day_index: 1,
+    annual_target_hours: 1772,
+    range_mode: "year" as "year" | "custom",
+    custom_start_date: `${currentYear}-01-01`,
+    custom_end_date: `${currentYear}-12-31`
+  });
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
 
   const shiftTypeById = useMemo(() => new Map(shiftTypes.map((type) => [type.id, type])), [shiftTypes]);
+  const patternDaysById = useMemo(() => {
+    const daysById = new Map<string, ShiftPatternDay[]>();
+    for (const day of patternDays) {
+      const days = daysById.get(day.pattern_id) ?? [];
+      days.push(day);
+      daysById.set(day.pattern_id, days);
+    }
+    return daysById;
+  }, [patternDays]);
   const employeeById = useMemo(() => new Map(employees.map((employee) => [employee.id, employee])), [employees]);
   const patternById = useMemo(() => new Map(patterns.map((pattern) => [pattern.id, pattern])), [patterns]);
   const departmentById = useMemo(() => new Map(departments.map((department) => [department.id, department])), [departments]);
@@ -73,6 +93,38 @@ export default function PatternsPage() {
     if (departmentFilter === ALL_DEPARTMENTS) return assignments;
     return assignments.filter((assignment) => employeeById.get(assignment.employee_id)?.department_id === departmentFilter);
   }, [assignments, departmentFilter, employeeById]);
+  const simulationParams = useMemo(() => ({
+    year: Number(simulationForm.year),
+    startDate: simulationForm.start_date,
+    startDayIndex: Math.max(0, Number(simulationForm.start_day_index) - 1),
+    annualTargetHours: Number(simulationForm.annual_target_hours),
+    rangeMode: simulationForm.range_mode,
+    customStartDate: simulationForm.custom_start_date,
+    customEndDate: simulationForm.custom_end_date
+  }), [simulationForm]);
+  const selectedPatternDays = useMemo(
+    () => (selectedPatternId ? patternDaysById.get(selectedPatternId) ?? [] : []),
+    [patternDaysById, selectedPatternId]
+  );
+  const formStats = useMemo(() => {
+    const formDays = patternForm.days.map((shiftTypeId, index) => ({
+      id: `${index}`,
+      pattern_id: selectedPatternId ?? "form",
+      day_index: index,
+      shift_type_id: shiftTypeId,
+      created_at: "",
+      updated_at: ""
+    }));
+    return patternCycleStats(formDays, shiftTypeById, Number(simulationForm.year));
+  }, [patternForm.days, selectedPatternId, shiftTypeById, simulationForm.year]);
+  const selectedStats = useMemo(
+    () => patternCycleStats(selectedPatternDays, shiftTypeById, Number(simulationForm.year)),
+    [selectedPatternDays, shiftTypeById, simulationForm.year]
+  );
+  const selectedSimulation = useMemo(
+    () => simulatePatternYear(selectedPatternDays, shiftTypeById, simulationParams),
+    [selectedPatternDays, shiftTypeById, simulationParams]
+  );
 
   async function loadData() {
     if (!supabase) return;
@@ -229,6 +281,8 @@ export default function PatternsPage() {
   }
 
   const preview = patternForm.days.map((shiftTypeId) => shiftTypeById.get(shiftTypeId)?.code ?? "?").join(" - ");
+  const yearStart = `${simulationForm.year}-01-01`;
+  const yearEnd = `${simulationForm.year}-12-31`;
 
   return (
     <PageShell title="Patrones de turno" subtitle="Ciclos repetitivos y asignacion a empleados.">
@@ -249,7 +303,9 @@ export default function PatternsPage() {
             <GhostButton type="button" onClick={resetPattern}><Plus className="h-4 w-4" />Nuevo</GhostButton>
           </div>
           {visiblePatterns.map((pattern) => {
-            const days = patternDays.filter((day) => day.pattern_id === pattern.id);
+            const days = patternDaysById.get(pattern.id) ?? [];
+            const stats = patternCycleStats(days, shiftTypeById, Number(simulationForm.year));
+            const simulation = simulatePatternYear(days, shiftTypeById, simulationParams);
             return (
               <button
                 key={pattern.id}
@@ -258,7 +314,17 @@ export default function PatternsPage() {
                 onClick={() => selectPattern(pattern)}
               >
                 <span className="block font-semibold">{pattern.name}</span>
-                <span className="text-sm text-moss">{departmentById.get(pattern.department_id ?? "")?.name ?? "Global"} · {days.length} dias · {pattern.is_active ? "Activo" : "Inactivo"}</span>
+                <span className="text-sm text-moss">{departmentById.get(pattern.department_id ?? "")?.name ?? "Global"} · {stats.cycleDays} dias · {pattern.is_active ? "Activo" : "Inactivo"}</span>
+                <span className="mt-2 block truncate text-xs text-ink">{stats.sequence || "Sin secuencia"}</span>
+                <span className="mt-2 grid grid-cols-2 gap-1 text-xs text-moss">
+                  <span>{formatHours(stats.hoursPerCycle)} h/ciclo</span>
+                  <span>{formatHours(stats.theoreticalAnnualHours)} h teoricas</span>
+                  <span>{stats.workedShiftsPerCycle} trabajados</span>
+                  <span>{formatHours(simulation.totalHours)} h simuladas</span>
+                  <span className={simulation.differenceFromTarget >= 0 ? "text-moss" : "text-coral"}>
+                    {formatSignedHours(simulation.differenceFromTarget)}
+                  </span>
+                </span>
               </button>
             );
           })}
@@ -303,9 +369,118 @@ export default function PatternsPage() {
               <div className="rounded-md border border-line bg-paper px-3 py-2 text-sm">
                 <span className="font-semibold">Vista previa: </span>{preview || "-"}
               </div>
+              <div className="grid gap-3 rounded-md border border-line bg-paper p-3 text-sm">
+                <div className="font-semibold">Computo del ciclo</div>
+                <div className="grid gap-2 md:grid-cols-2">
+                  <Metric label="Secuencia" value={formStats.sequence || "-"} />
+                  <Metric label="Dias del ciclo" value={`${formStats.cycleDays}`} />
+                  <Metric label="Turnos trabajados por ciclo" value={`${formStats.workedShiftsPerCycle}`} />
+                  <Metric label="Horas computables por ciclo" value={`${formatHours(formStats.hoursPerCycle)} h`} />
+                  <Metric label="Estimacion anual teorica" value={`${formatHours(formStats.theoreticalAnnualHours)} h`} />
+                  <Metric label="Diferencia referencia" value={formatSignedHours(formStats.theoreticalAnnualHours - Number(simulationForm.annual_target_hours))} />
+                </div>
+              </div>
               <Button type="button" disabled={saving} onClick={savePattern}><Save className="h-4 w-4" />Guardar patron</Button>
             </div>
           </form>
+
+          <div className="rounded-md border border-line bg-white p-4 shadow-subtle">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h3 className="font-semibold">Simulacion exacta</h3>
+              <span className="text-xs font-medium text-moss">Analisis sin crear turnos reales</span>
+            </div>
+            <div className="grid gap-3 md:grid-cols-4">
+              <Field label="Año seleccionado">
+                <Input
+                  type="number"
+                  min="2000"
+                  max="2100"
+                  value={simulationForm.year}
+                  onChange={(event) => {
+                    const year = Number(event.target.value);
+                    setSimulationForm({
+                      ...simulationForm,
+                      year,
+                      custom_start_date: `${year}-01-01`,
+                      custom_end_date: `${year}-12-31`
+                    });
+                  }}
+                />
+              </Field>
+              <Field label="Fecha de inicio del patron">
+                <Input type="date" value={simulationForm.start_date} onChange={(event) => setSimulationForm({ ...simulationForm, start_date: event.target.value })} />
+              </Field>
+              <Field label="Dia inicial del ciclo">
+                <Input type="number" min="1" value={simulationForm.start_day_index} onChange={(event) => setSimulationForm({ ...simulationForm, start_day_index: Number(event.target.value) })} />
+              </Field>
+              <Field label="Objetivo anual referencia">
+                <Input type="number" min="0" step="0.01" value={simulationForm.annual_target_hours} onChange={(event) => setSimulationForm({ ...simulationForm, annual_target_hours: Number(event.target.value) })} />
+              </Field>
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-[220px_1fr_1fr]">
+              <Field label="Periodo">
+                <Select value={simulationForm.range_mode} onChange={(event) => setSimulationForm({ ...simulationForm, range_mode: event.target.value as "year" | "custom" })}>
+                  <option value="year">Año completo</option>
+                  <option value="custom">Rango personalizado</option>
+                </Select>
+              </Field>
+              <Field label="Desde">
+                <Input
+                  type="date"
+                  value={simulationForm.range_mode === "year" ? yearStart : simulationForm.custom_start_date}
+                  disabled={simulationForm.range_mode === "year"}
+                  onChange={(event) => setSimulationForm({ ...simulationForm, custom_start_date: event.target.value })}
+                />
+              </Field>
+              <Field label="Hasta">
+                <Input
+                  type="date"
+                  value={simulationForm.range_mode === "year" ? yearEnd : simulationForm.custom_end_date}
+                  disabled={simulationForm.range_mode === "year"}
+                  onChange={(event) => setSimulationForm({ ...simulationForm, custom_end_date: event.target.value })}
+                />
+              </Field>
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-[1.1fr_1fr]">
+              <div className="grid gap-2 rounded-md border border-line bg-paper p-3 text-sm">
+                <div className="font-semibold">{selectedPatternId ? patternById.get(selectedPatternId)?.name : "Selecciona un patron"}</div>
+                <div className="grid gap-2 md:grid-cols-2">
+                  <Metric label="Secuencia del patron" value={selectedStats.sequence || "-"} />
+                  <Metric label="Numero de dias del ciclo" value={`${selectedStats.cycleDays}`} />
+                  <Metric label="Turnos trabajados por ciclo" value={`${selectedStats.workedShiftsPerCycle}`} />
+                  <Metric label="Horas computables por ciclo" value={`${formatHours(selectedStats.hoursPerCycle)} h`} />
+                  <Metric label="Estimacion anual teorica" value={`${formatHours(selectedStats.theoreticalAnnualHours)} h`} />
+                  <Metric label="Diferencia teorica" value={formatSignedHours(selectedStats.theoreticalAnnualHours - Number(simulationForm.annual_target_hours))} />
+                </div>
+              </div>
+              <div className="grid gap-2 rounded-md border border-line bg-paper p-3 text-sm">
+                <div className="font-semibold">Resultado simulado</div>
+                <div className="grid gap-2 md:grid-cols-2">
+                  <Metric label="Rango" value={`${selectedSimulation.rangeStart || "-"} / ${selectedSimulation.rangeEnd || "-"}`} />
+                  <Metric label="Horas totales" value={`${formatHours(selectedSimulation.totalHours)} h`} />
+                  <Metric label="Dias trabajados" value={`${selectedSimulation.workedDays}`} />
+                  <Metric label="Dias libres" value={`${selectedSimulation.freeDays}`} />
+                  <Metric label="Objetivo referencia" value={`${formatHours(Number(simulationForm.annual_target_hours))} h`} />
+                  <Metric label="Diferencia" value={formatSignedHours(selectedSimulation.differenceFromTarget)} />
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 rounded-md border border-line bg-white p-3">
+              <div className="mb-2 text-sm font-semibold">Apariciones por tipo de turno</div>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(selectedSimulation.countsByShiftTypeId).length ? Object.entries(selectedSimulation.countsByShiftTypeId)
+                  .sort(([first], [second]) => (shiftTypeById.get(first)?.code ?? "").localeCompare(shiftTypeById.get(second)?.code ?? ""))
+                  .map(([shiftTypeId, count]) => {
+                    const shiftType = shiftTypeById.get(shiftTypeId);
+                    return (
+                      <span key={shiftTypeId} className="rounded-md border border-line px-2 py-1 text-xs font-medium">
+                        {shiftType?.code ?? "?"}: {count}
+                      </span>
+                    );
+                  }) : <span className="text-sm text-moss">No hay datos para simular.</span>}
+              </div>
+            </div>
+          </div>
 
           <div className="grid gap-5 xl:grid-cols-[360px_1fr]">
             <form className="rounded-md border border-line bg-white p-4 shadow-subtle" onSubmit={(event) => event.preventDefault()}>
@@ -368,5 +543,27 @@ export default function PatternsPage() {
         </div>
       </div>
     </PageShell>
+  );
+}
+
+function formatHours(value: number) {
+  return new Intl.NumberFormat("es-ES", {
+    maximumFractionDigits: 2
+  }).format(value);
+}
+
+function formatSignedHours(value: number) {
+  const formatted = formatHours(Math.abs(value));
+  if (value > 0) return `+${formatted} h`;
+  if (value < 0) return `-${formatted} h`;
+  return "0 h";
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-xs font-medium uppercase tracking-wide text-moss">{label}</div>
+      <div className="break-words font-semibold text-ink">{value}</div>
+    </div>
   );
 }
