@@ -3,8 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageShell } from "@/components/page-shell";
 import { Notice, Select } from "@/components/ui";
-import { annualTarget, assignmentHours, proportionalTargetUntilDate } from "@/lib/hours";
-import type { Employee, ShiftAssignment, ShiftType } from "@/lib/database.types";
+import {
+  annualTargetByPeriods,
+  assignmentHours,
+  currentWorkloadPercentage,
+  proportionalTargetByPeriodsUntilDate
+} from "@/lib/hours";
+import type { Employee, EmployeeWorkloadPeriod, ShiftAssignment, ShiftType } from "@/lib/database.types";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase/client";
 
 function localIsoDate(date: Date) {
@@ -20,6 +25,7 @@ export default function AnnualSummaryPage() {
   const todayIso = localIsoDate(today);
   const [year, setYear] = useState(currentYear);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [workloadPeriods, setWorkloadPeriods] = useState<EmployeeWorkloadPeriod[]>([]);
   const [shiftTypes, setShiftTypes] = useState<ShiftType[]>([]);
   const [assignments, setAssignments] = useState<ShiftAssignment[]>([]);
   const [message, setMessage] = useState("");
@@ -27,15 +33,22 @@ export default function AnnualSummaryPage() {
   const loadData = useCallback(async () => {
     if (!supabase) return;
     const { data: employeeData, error: employeeError } = await supabase.from("employees").select("*").order("name");
+    const { data: workloadData, error: workloadError } = await supabase
+      .from("employee_workload_periods")
+      .select("*")
+      .lte("start_date", `${year}-12-31`)
+      .or(`end_date.is.null,end_date.gte.${year}-01-01`)
+      .order("start_date");
     const { data: typeData, error: typeError } = await supabase.from("shift_types").select("*").order("code");
     const { data: assignmentData, error: assignmentError } = await supabase
       .from("shift_assignments")
       .select("*")
       .gte("date", `${year}-01-01`)
       .lte("date", `${year}-12-31`);
-    const error = employeeError ?? typeError ?? assignmentError;
+    const error = employeeError ?? workloadError ?? typeError ?? assignmentError;
     if (error) setMessage(error.message);
     setEmployees(employeeData ?? []);
+    setWorkloadPeriods(workloadData ?? []);
     setShiftTypes(typeData ?? []);
     setAssignments(assignmentData ?? []);
   }, [year]);
@@ -47,20 +60,24 @@ export default function AnnualSummaryPage() {
   const rows = useMemo(() => {
     return employees.map((employee) => {
       const employeeAssignments = assignments.filter((assignment) => assignment.employee_id === employee.id);
+      const employeePeriods = workloadPeriods.filter((period) => period.employee_id === employee.id);
       const hours = assignmentHours(employeeAssignments, shiftTypes);
-      const target = annualTarget(employee);
-      return { employee, hours, target, diff: hours - target };
+      const targetResult = annualTargetByPeriods(employee, employeePeriods, year);
+      const currentWorkload = currentWorkloadPercentage(employeePeriods, today);
+      return { employee, hours, target: targetResult.target, diff: hours - targetResult.target, currentWorkload, missingRanges: targetResult.missingRanges };
     });
-  }, [employees, assignments, shiftTypes]);
+  }, [employees, assignments, shiftTypes, workloadPeriods, today, year]);
 
   const trackingRows = useMemo(() => {
     return employees.map((employee) => {
       const employeeAssignments = assignments.filter((assignment) => assignment.employee_id === employee.id && assignment.date <= todayIso);
+      const employeePeriods = workloadPeriods.filter((period) => period.employee_id === employee.id);
       const hours = assignmentHours(employeeAssignments, shiftTypes);
-      const target = proportionalTargetUntilDate(employee, year, today);
-      return { employee, hours, target, diff: hours - target };
+      const targetResult = proportionalTargetByPeriodsUntilDate(employee, employeePeriods, year, today);
+      const currentWorkload = currentWorkloadPercentage(employeePeriods, today);
+      return { employee, hours, target: targetResult.target, diff: hours - targetResult.target, currentWorkload, missingRanges: targetResult.missingRanges };
     });
-  }, [employees, assignments, shiftTypes, today, todayIso, year]);
+  }, [employees, assignments, shiftTypes, workloadPeriods, today, todayIso, year]);
 
   return (
     <PageShell
@@ -94,11 +111,14 @@ export default function AnnualSummaryPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map(({ employee, hours, target, diff }) => (
+              {rows.map(({ employee, hours, target, diff, currentWorkload, missingRanges }) => (
                 <tr key={employee.id} className="border-b border-line last:border-0">
                   <td className="px-3 py-3 font-medium">{employee.name}</td>
                   <td className="px-3 py-3">{employee.category}</td>
-                  <td className="px-3 py-3 text-right">{employee.workday_percentage}%</td>
+                  <td className="px-3 py-3 text-right">
+                    {currentWorkload ? `${currentWorkload}%` : "Sin jornada"}
+                    {missingRanges.length > 0 ? <div className="text-xs text-coral">Sin jornada definida para este periodo</div> : null}
+                  </td>
                   <td className="px-3 py-3 text-right">{hours.toFixed(1)} h</td>
                   <td className="px-3 py-3 text-right">{target.toFixed(1)} h</td>
                   <td className={`px-3 py-3 text-right font-semibold ${diff >= 0 ? "text-moss" : "text-coral"}`}>
@@ -129,11 +149,14 @@ export default function AnnualSummaryPage() {
               </tr>
             </thead>
             <tbody>
-              {trackingRows.map(({ employee, hours, target, diff }) => (
+              {trackingRows.map(({ employee, hours, target, diff, currentWorkload, missingRanges }) => (
                 <tr key={employee.id} className="border-b border-line last:border-0">
                   <td className="px-3 py-3 font-medium">{employee.name}</td>
                   <td className="px-3 py-3">{employee.category}</td>
-                  <td className="px-3 py-3 text-right">{employee.workday_percentage}%</td>
+                  <td className="px-3 py-3 text-right">
+                    {currentWorkload ? `${currentWorkload}%` : "Sin jornada"}
+                    {missingRanges.length > 0 ? <div className="text-xs text-coral">Sin jornada definida para este periodo</div> : null}
+                  </td>
                   <td className="px-3 py-3 text-right">{hours.toFixed(1)} h</td>
                   <td className="px-3 py-3 text-right">{target.toFixed(1)} h</td>
                   <td className={`px-3 py-3 text-right font-semibold ${diff >= 0 ? "text-moss" : "text-coral"}`}>

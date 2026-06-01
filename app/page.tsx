@@ -5,8 +5,8 @@ import { ChevronLeft, ChevronRight, RefreshCw, Wand2 } from "lucide-react";
 import { PageShell } from "@/components/page-shell";
 import { Button, Field, GhostButton, Input, Notice, Select } from "@/components/ui";
 import { monthDays, monthLabel, monthRange } from "@/lib/dates";
-import { assignmentHours, monthlyTarget, proportionalTarget } from "@/lib/hours";
-import type { Employee, ShiftAssignment, ShiftType } from "@/lib/database.types";
+import { assignmentHours, workloadTargetForExactRange, workloadTargetForRange } from "@/lib/hours";
+import type { Employee, EmployeeWorkloadPeriod, ShiftAssignment, ShiftType } from "@/lib/database.types";
 import { generateShiftsFromPatterns } from "@/lib/pattern-generation";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase/client";
 
@@ -15,6 +15,7 @@ export default function SchedulePage() {
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [workloadPeriods, setWorkloadPeriods] = useState<EmployeeWorkloadPeriod[]>([]);
   const [shiftTypes, setShiftTypes] = useState<ShiftType[]>([]);
   const [monthAssignments, setMonthAssignments] = useState<ShiftAssignment[]>([]);
   const [yearAssignments, setYearAssignments] = useState<ShiftAssignment[]>([]);
@@ -48,6 +49,12 @@ export default function SchedulePage() {
       .lte("start_date", range.endIso)
       .or(`end_date.is.null,end_date.gte.${range.startIso}`)
       .order("name");
+    const { data: workloadData, error: workloadError } = await supabase
+      .from("employee_workload_periods")
+      .select("*")
+      .lte("start_date", range.endIso)
+      .or(`end_date.is.null,end_date.gte.${yearStart}`)
+      .order("start_date");
     const { data: typeData, error: typeError } = await supabase.from("shift_types").select("*").order("code");
     const { data: monthData, error: monthError } = await supabase
       .from("shift_assignments")
@@ -60,9 +67,10 @@ export default function SchedulePage() {
       .gte("date", yearStart)
       .lte("date", range.endIso);
 
-    const error = employeeError ?? typeError ?? monthError ?? yearError;
+    const error = employeeError ?? workloadError ?? typeError ?? monthError ?? yearError;
     if (error) setMessage(error.message);
     setEmployees(employeeData ?? []);
+    setWorkloadPeriods(workloadData ?? []);
     setShiftTypes(typeData ?? []);
     setMonthAssignments(monthData ?? []);
     setYearAssignments(yearData ?? []);
@@ -135,13 +143,16 @@ export default function SchedulePage() {
     const yearRows = yearAssignments.filter((assignment) => assignment.employee_id === employee.id);
     const monthHours = assignmentHours(monthRows, shiftTypes);
     const yearHours = assignmentHours(yearRows, shiftTypes);
-    const target = proportionalTarget(employee, month);
+    const employeePeriods = workloadPeriods.filter((period) => period.employee_id === employee.id);
+    const monthTarget = workloadTargetForExactRange(employee, employeePeriods, year, range.startIso, range.endIso);
+    const target = workloadTargetForRange(employee, employeePeriods, year, range.endIso);
     return {
       monthHours,
       yearHours,
-      monthTarget: monthlyTarget(employee),
-      target,
-      diff: yearHours - target
+      monthTarget: monthTarget.target,
+      target: target.target,
+      hasMissingWorkload: monthTarget.missingRanges.length > 0 || target.missingRanges.length > 0,
+      diff: yearHours - target.target
     };
   }
 
@@ -271,6 +282,7 @@ export default function SchedulePage() {
                   <td className="border-r border-line px-3 py-2 text-right">{summary.yearHours.toFixed(1)} / {summary.target.toFixed(1)}</td>
                   <td className={`px-3 py-2 text-right font-semibold ${summary.diff >= 0 ? "text-moss" : "text-coral"}`}>
                     {summary.diff >= 0 ? "+" : ""}{summary.diff.toFixed(1)} h
+                    {summary.hasMissingWorkload ? <div className="text-xs font-normal text-coral">Sin jornada definida</div> : null}
                   </td>
                 </tr>
               );

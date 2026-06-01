@@ -31,6 +31,40 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["employees"]["Insert"]>;
         Relationships: [];
       };
+      employee_workload_periods: {
+        Row: {
+          id: string;
+          employee_id: string;
+          start_date: string;
+          end_date: string | null;
+          workload_percentage: number;
+          annual_hours_full_time: number;
+          notes: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          employee_id: string;
+          start_date: string;
+          end_date?: string | null;
+          workload_percentage: number;
+          annual_hours_full_time: number;
+          notes?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["employee_workload_periods"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "employee_workload_periods_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
       shift_types: {
         Row: {
           id: string;
@@ -238,6 +272,7 @@ export type Database = {
 };
 
 export type Employee = Database["public"]["Tables"]["employees"]["Row"];
+export type EmployeeWorkloadPeriod = Database["public"]["Tables"]["employee_workload_periods"]["Row"];
 export type ShiftType = Database["public"]["Tables"]["shift_types"]["Row"];
 export type ShiftAssignment = Database["public"]["Tables"]["shift_assignments"]["Row"];
 export type ShiftPattern = Database["public"]["Tables"]["shift_patterns"]["Row"];
