@@ -96,7 +96,7 @@ export default function AbsencesPage() {
       end_date: form.end_date,
       notes: form.notes.trim() || null
     };
-    const { error } = await supabase.from("absences").insert(payload);
+    const { data: absence, error } = await supabase.from("absences").insert(payload).select("id").single();
     if (error) {
       setMessage(error.message);
       return;
@@ -104,7 +104,12 @@ export default function AbsencesPage() {
     const assignments = enumerateDates(form.start_date, form.end_date).map((date) => ({
       employee_id: form.employee_id,
       date,
-      shift_type_id: form.shift_type_id
+      shift_type_id: form.shift_type_id,
+      source: "absence" as const,
+      source_id: absence.id,
+      employee_shift_pattern_id: null,
+      generated_at: null,
+      updated_by_user_id: null
     }));
     const upsertResult = await supabase.from("shift_assignments").upsert(assignments, { onConflict: "employee_id,date" });
     if (upsertResult.error) setMessage(upsertResult.error.message);

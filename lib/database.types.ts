@@ -1,4 +1,6 @@
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
+export type ShiftAssignmentSource = "manual" | "pattern" | "absence" | "swap";
+export type ShiftSwapStatus = "pending" | "approved" | "rejected" | "cancelled";
 
 export type Database = {
   public: {
@@ -161,9 +163,11 @@ export type Database = {
           employee_id: string;
           date: string;
           shift_type_id: string;
-          source: "manual" | "pattern";
+          source: ShiftAssignmentSource;
+          source_id: string | null;
           employee_shift_pattern_id: string | null;
           generated_at: string | null;
+          updated_by_user_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -172,9 +176,11 @@ export type Database = {
           employee_id: string;
           date: string;
           shift_type_id: string;
-          source?: "manual" | "pattern";
+          source?: ShiftAssignmentSource;
+          source_id?: string | null;
           employee_shift_pattern_id?: string | null;
           generated_at?: string | null;
+          updated_by_user_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -190,6 +196,97 @@ export type Database = {
           {
             foreignKeyName: "shift_assignments_shift_type_id_fkey";
             columns: ["shift_type_id"];
+            isOneToOne: false;
+            referencedRelation: "shift_types";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      shift_swaps: {
+        Row: {
+          id: string;
+          employee_a_id: string;
+          employee_b_id: string;
+          employee_a_original_date: string;
+          employee_b_original_date: string;
+          employee_a_original_shift_id: string;
+          employee_b_original_shift_id: string;
+          employee_a_new_shift_id: string;
+          employee_b_new_shift_id: string;
+          employee_a_previous_source: ShiftAssignmentSource;
+          employee_a_previous_source_id: string | null;
+          employee_b_previous_source: ShiftAssignmentSource;
+          employee_b_previous_source_id: string | null;
+          status: ShiftSwapStatus;
+          reason: string | null;
+          requested_by_user_id: string | null;
+          approved_by_user_id: string | null;
+          approved_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          employee_a_id: string;
+          employee_b_id: string;
+          employee_a_original_date: string;
+          employee_b_original_date: string;
+          employee_a_original_shift_id: string;
+          employee_b_original_shift_id: string;
+          employee_a_new_shift_id: string;
+          employee_b_new_shift_id: string;
+          employee_a_previous_source: ShiftAssignmentSource;
+          employee_a_previous_source_id?: string | null;
+          employee_b_previous_source: ShiftAssignmentSource;
+          employee_b_previous_source_id?: string | null;
+          status?: ShiftSwapStatus;
+          reason?: string | null;
+          requested_by_user_id?: string | null;
+          approved_by_user_id?: string | null;
+          approved_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["shift_swaps"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "shift_swaps_employee_a_id_fkey";
+            columns: ["employee_a_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "shift_swaps_employee_b_id_fkey";
+            columns: ["employee_b_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "shift_swaps_employee_a_original_shift_id_fkey";
+            columns: ["employee_a_original_shift_id"];
+            isOneToOne: false;
+            referencedRelation: "shift_types";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "shift_swaps_employee_b_original_shift_id_fkey";
+            columns: ["employee_b_original_shift_id"];
+            isOneToOne: false;
+            referencedRelation: "shift_types";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "shift_swaps_employee_a_new_shift_id_fkey";
+            columns: ["employee_a_new_shift_id"];
+            isOneToOne: false;
+            referencedRelation: "shift_types";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "shift_swaps_employee_b_new_shift_id_fkey";
+            columns: ["employee_b_new_shift_id"];
             isOneToOne: false;
             referencedRelation: "shift_types";
             referencedColumns: ["id"];
@@ -384,7 +481,18 @@ export type Database = {
       };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      register_approved_shift_swap: {
+        Args: {
+          p_employee_a_id: string;
+          p_employee_a_date: string;
+          p_employee_b_id: string;
+          p_employee_b_date: string;
+          p_reason?: string | null;
+        };
+        Returns: Database["public"]["Tables"]["shift_swaps"]["Row"];
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };
@@ -396,6 +504,7 @@ export type UserDepartment = Database["public"]["Tables"]["user_departments"]["R
 export type EmployeeWorkloadPeriod = Database["public"]["Tables"]["employee_workload_periods"]["Row"];
 export type ShiftType = Database["public"]["Tables"]["shift_types"]["Row"];
 export type ShiftAssignment = Database["public"]["Tables"]["shift_assignments"]["Row"];
+export type ShiftSwap = Database["public"]["Tables"]["shift_swaps"]["Row"];
 export type DepartmentShiftCoverageRule = Database["public"]["Tables"]["department_shift_coverage_rules"]["Row"];
 export type ShiftPattern = Database["public"]["Tables"]["shift_patterns"]["Row"];
 export type ShiftPatternDay = Database["public"]["Tables"]["shift_pattern_days"]["Row"];

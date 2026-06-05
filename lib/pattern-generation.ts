@@ -125,6 +125,7 @@ export async function generateShiftsFromPatterns(
         date,
         shift_type_id: patternDay.shift_type_id,
         source: "pattern",
+        source_id: assignment.id,
         employee_shift_pattern_id: assignment.id,
         generated_at: new Date().toISOString()
       });

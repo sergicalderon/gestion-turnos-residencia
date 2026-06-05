@@ -2,19 +2,34 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
-import { ChevronLeft, ChevronRight, RefreshCw, Wand2 } from "lucide-react";
+import { ArrowLeftRight, ChevronLeft, ChevronRight, RefreshCw, Wand2 } from "lucide-react";
 import { getISODay } from "date-fns";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageShell } from "@/components/page-shell";
-import { Button, Field, GhostButton, Input, Notice, Select } from "@/components/ui";
+import { Button, Field, GhostButton, Input, Notice, Select, Textarea } from "@/components/ui";
 import { ALL_DEPARTMENTS, departmentSlug, findDepartmentByParam } from "@/lib/departments";
 import { monthDays, monthLabel, monthRange } from "@/lib/dates";
 import { assignmentHours, operationalMonthlyTarget } from "@/lib/hours";
-import type { Department, DepartmentShiftCoverageRule, Employee, EmployeeWorkloadPeriod, ShiftAssignment, ShiftType } from "@/lib/database.types";
+import type { Department, DepartmentShiftCoverageRule, Employee, EmployeeWorkloadPeriod, ShiftAssignment, ShiftSwap, ShiftType } from "@/lib/database.types";
 import { generateShiftsFromPatterns } from "@/lib/pattern-generation";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase/client";
 
 const NON_COVERAGE_SHIFT_CODES = new Set(["L", "V", "VAC", "VACACIONES", "LIBRE"]);
+
+type SelectedCell = {
+  employeeId: string;
+  date: string;
+};
+
+type SwapDetail = {
+  swap: ShiftSwap;
+  otherEmployeeId: string;
+  otherDate: string;
+  originalShiftId: string;
+  newShiftId: string;
+  previousSource: ShiftAssignment["source"];
+  previousSourceId: string | null;
+};
 
 function isDefaultCoverageShiftType(shiftType: ShiftType) {
   return Number(shiftType.computable_hours) > 0 && !NON_COVERAGE_SHIFT_CODES.has(shiftType.code.trim().toUpperCase());
@@ -26,6 +41,15 @@ function isMissingCoverageRulesTable(error: { code?: string; message?: string } 
     error.code === "42P01" ||
     error.code === "PGRST205" ||
     error.message?.includes("department_shift_coverage_rules")
+  );
+}
+
+function isMissingShiftSwapsTable(error: { code?: string; message?: string } | null) {
+  if (!error) return false;
+  return (
+    error.code === "42P01" ||
+    error.code === "PGRST205" ||
+    error.message?.includes("shift_swaps")
   );
 }
 
@@ -41,10 +65,19 @@ export default function SchedulePage() {
   const [workloadPeriods, setWorkloadPeriods] = useState<EmployeeWorkloadPeriod[]>([]);
   const [shiftTypes, setShiftTypes] = useState<ShiftType[]>([]);
   const [monthAssignments, setMonthAssignments] = useState<ShiftAssignment[]>([]);
+  const [monthSwaps, setMonthSwaps] = useState<ShiftSwap[]>([]);
   const [coverageRules, setCoverageRules] = useState<DepartmentShiftCoverageRule[]>([]);
   const [selectedCoverageShiftTypeIds, setSelectedCoverageShiftTypeIds] = useState<string[] | null>(null);
   const [message, setMessage] = useState("");
   const [savingCell, setSavingCell] = useState<string | null>(null);
+  const [selectedCell, setSelectedCell] = useState<SelectedCell | null>(null);
+  const [showSwapForm, setShowSwapForm] = useState(false);
+  const [swapSaving, setSwapSaving] = useState(false);
+  const [swapForm, setSwapForm] = useState({
+    employee_b_id: "",
+    employee_b_date: "",
+    reason: ""
+  });
   const [zoom, setZoom] = useState(1);
   const [showGenerate, setShowGenerate] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -75,6 +108,21 @@ export default function SchedulePage() {
   const assignmentByCell = useMemo(() => {
     return new Map(monthAssignments.map((assignment) => [`${assignment.employee_id}-${assignment.date}`, assignment]));
   }, [monthAssignments]);
+
+  const employeeById = useMemo(() => new Map(employees.map((employee) => [employee.id, employee])), [employees]);
+
+  const shiftTypeById = useMemo(() => new Map(shiftTypes.map((type) => [type.id, type])), [shiftTypes]);
+
+  const swapById = useMemo(() => new Map(monthSwaps.map((swap) => [swap.id, swap])), [monthSwaps]);
+
+  const selectedAssignment = selectedCell ? assignmentByCell.get(`${selectedCell.employeeId}-${selectedCell.date}`) ?? null : null;
+  const selectedEmployee = selectedCell ? employeeById.get(selectedCell.employeeId) ?? null : null;
+  const selectedShiftType = selectedAssignment ? shiftTypeById.get(selectedAssignment.shift_type_id) ?? null : null;
+  const secondAssignment = swapForm.employee_b_id && swapForm.employee_b_date
+    ? assignmentByCell.get(`${swapForm.employee_b_id}-${swapForm.employee_b_date}`) ?? null
+    : null;
+  const secondEmployee = swapForm.employee_b_id ? employeeById.get(swapForm.employee_b_id) ?? null : null;
+  const secondShiftType = secondAssignment ? shiftTypeById.get(secondAssignment.shift_type_id) ?? null : null;
 
   const coverageShiftTypes = useMemo(() => {
     const available = selectedDepartmentId === ALL_DEPARTMENTS
@@ -142,6 +190,11 @@ export default function SchedulePage() {
       .select("*")
       .gte("date", range.startIso)
       .lte("date", range.endIso);
+    const { data: swapData, error: swapError } = await supabase
+      .from("shift_swaps")
+      .select("*")
+      .or(`and(employee_a_original_date.gte.${range.startIso},employee_a_original_date.lte.${range.endIso}),and(employee_b_original_date.gte.${range.startIso},employee_b_original_date.lte.${range.endIso})`)
+      .order("created_at", { ascending: false });
     const { data: coverageRuleData, error: coverageRuleError } = selectedDepartmentId === ALL_DEPARTMENTS
       ? { data: [], error: null }
       : await supabase
@@ -150,7 +203,7 @@ export default function SchedulePage() {
         .eq("department_id", selectedDepartmentId)
         .eq("is_active", true);
 
-    const error = employeeError ?? workloadError ?? typeError ?? departmentError ?? monthError ?? (isMissingCoverageRulesTable(coverageRuleError) ? null : coverageRuleError);
+    const error = employeeError ?? workloadError ?? typeError ?? departmentError ?? monthError ?? (isMissingShiftSwapsTable(swapError) ? null : swapError) ?? (isMissingCoverageRulesTable(coverageRuleError) ? null : coverageRuleError);
     if (error) setMessage(error.message);
     setEmployees(employeeData ?? []);
     const nextDepartments = departmentData ?? [];
@@ -160,6 +213,7 @@ export default function SchedulePage() {
     setWorkloadPeriods(workloadData ?? []);
     setShiftTypes(typeData ?? []);
     setMonthAssignments(monthData ?? []);
+    setMonthSwaps((swapData as ShiftSwap[] | null) ?? []);
     setCoverageRules((coverageRuleData as DepartmentShiftCoverageRule[] | null) ?? []);
   }, [range.endIso, range.startIso, searchParams, selectedDepartmentId]);
 
@@ -172,6 +226,10 @@ export default function SchedulePage() {
       ...current,
       start_date: range.startIso,
       end_date: range.endIso
+    }));
+    setSwapForm((current) => ({
+      ...current,
+      employee_b_date: current.employee_b_date || range.startIso
     }));
   }, [range.endIso, range.startIso]);
 
@@ -203,6 +261,95 @@ export default function SchedulePage() {
     return options;
   }
 
+  function selectCell(employeeId: string, date: string) {
+    setSelectedCell({ employeeId, date });
+    setShowSwapForm(false);
+    setSwapForm((current) => ({
+      ...current,
+      employee_b_id: current.employee_b_id || visibleEmployees.find((employee) => employee.id !== employeeId)?.id || employeeId,
+      employee_b_date: current.employee_b_date || date
+    }));
+  }
+
+  function startSwapFromSelectedCell() {
+    if (!selectedCell || !selectedAssignment) {
+      setMessage("Selecciona una celda con turno asignado para registrar un cambio.");
+      return;
+    }
+    setMessage("");
+    setShowSwapForm(true);
+    setSwapForm((current) => ({
+      ...current,
+      employee_b_id: current.employee_b_id || visibleEmployees.find((employee) => employee.id !== selectedCell.employeeId)?.id || selectedCell.employeeId,
+      employee_b_date: current.employee_b_date || selectedCell.date
+    }));
+  }
+
+  function swapDetailFor(assignment: ShiftAssignment | undefined): SwapDetail | null {
+    if (!assignment || assignment.source !== "swap" || !assignment.source_id) return null;
+    const swap = swapById.get(assignment.source_id);
+    if (!swap) return null;
+    const isEmployeeA = swap.employee_a_id === assignment.employee_id && swap.employee_a_original_date === assignment.date;
+    const isEmployeeB = swap.employee_b_id === assignment.employee_id && swap.employee_b_original_date === assignment.date;
+    if (!isEmployeeA && !isEmployeeB) return null;
+    return {
+      swap,
+      otherEmployeeId: isEmployeeA ? swap.employee_b_id : swap.employee_a_id,
+      otherDate: isEmployeeA ? swap.employee_b_original_date : swap.employee_a_original_date,
+      originalShiftId: isEmployeeA ? swap.employee_a_original_shift_id : swap.employee_b_original_shift_id,
+      newShiftId: isEmployeeA ? swap.employee_a_new_shift_id : swap.employee_b_new_shift_id,
+      previousSource: isEmployeeA ? swap.employee_a_previous_source : swap.employee_b_previous_source,
+      previousSourceId: isEmployeeA ? swap.employee_a_previous_source_id : swap.employee_b_previous_source_id
+    };
+  }
+
+  function shortUserId(userId: string | null) {
+    return userId ? `${userId.slice(0, 8)}...` : "-";
+  }
+
+  async function registerSwap() {
+    if (!supabase || !selectedCell) return;
+    setMessage("");
+
+    if (!selectedAssignment) {
+      setMessage("La primera celda seleccionada no tiene un turno asignado.");
+      return;
+    }
+    if (!swapForm.employee_b_id || !swapForm.employee_b_date) {
+      setMessage("Selecciona el segundo empleado y la fecha del segundo turno.");
+      return;
+    }
+    if (selectedCell.employeeId === swapForm.employee_b_id && selectedCell.date === swapForm.employee_b_date) {
+      setMessage("No se puede registrar un cambio de turno contra la misma celda.");
+      return;
+    }
+    if (!secondAssignment) {
+      setMessage("La segunda celda seleccionada no tiene un turno asignado.");
+      return;
+    }
+
+    setSwapSaving(true);
+    const { error } = await supabase.rpc("register_approved_shift_swap", {
+      p_employee_a_id: selectedCell.employeeId,
+      p_employee_a_date: selectedCell.date,
+      p_employee_b_id: swapForm.employee_b_id,
+      p_employee_b_date: swapForm.employee_b_date,
+      p_reason: swapForm.reason.trim() || null
+    });
+
+    if (error) {
+      setMessage(error.message);
+      setSwapSaving(false);
+      return;
+    }
+
+    setMessage("Cambio de turno registrado.");
+    setShowSwapForm(false);
+    setSwapForm((current) => ({ ...current, reason: "" }));
+    await loadData();
+    setSwapSaving(false);
+  }
+
   async function saveAssignment(employeeId: string, date: string, shiftTypeId: string) {
     if (!supabase) return;
     const key = `${employeeId}-${date}`;
@@ -217,8 +364,10 @@ export default function SchedulePage() {
           date,
           shift_type_id: shiftTypeId,
           source: "manual",
+          source_id: null,
           employee_shift_pattern_id: null,
-          generated_at: null
+          generated_at: null,
+          updated_by_user_id: null
         },
         { onConflict: "employee_id,date" }
       );
@@ -287,6 +436,14 @@ export default function SchedulePage() {
       diff: monthHours - monthTarget.target
     };
   }
+
+  const selectedSwapDetail = swapDetailFor(selectedAssignment ?? undefined);
+  const visibleSwapRows = monthSwaps.filter((swap) => {
+    if (selectedDepartmentId === ALL_DEPARTMENTS) return true;
+    const employeeA = employeeById.get(swap.employee_a_id);
+    const employeeB = employeeById.get(swap.employee_b_id);
+    return employeeA?.department_id === selectedDepartmentId || employeeB?.department_id === selectedDepartmentId;
+  });
 
   return (
     <PageShell
@@ -382,6 +539,74 @@ export default function SchedulePage() {
           </div>
         </div>
       ) : null}
+      {selectedCell ? (
+        <div className="mb-3 rounded-md border border-line bg-white p-3 shadow-subtle">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold uppercase text-moss">Celda seleccionada</div>
+              <div className="mt-1 font-semibold">
+                {selectedEmployee?.name ?? "Empleado"} · {selectedCell.date} · {selectedShiftType?.code ?? "Sin turno"}
+              </div>
+              {selectedSwapDetail ? (
+                <div className="mt-2 grid gap-1 text-sm text-moss">
+                  <div>Cambio con {employeeById.get(selectedSwapDetail.otherEmployeeId)?.name ?? "otro empleado"} el {selectedSwapDetail.otherDate}.</div>
+                  <div>
+                    Turno original {shiftTypeById.get(selectedSwapDetail.originalShiftId)?.code ?? "-"}; turno actual {shiftTypeById.get(selectedSwapDetail.newShiftId)?.code ?? "-"}.
+                  </div>
+                  <div>Origen anterior: {selectedSwapDetail.previousSource}{selectedSwapDetail.previousSourceId ? ` (${selectedSwapDetail.previousSourceId.slice(0, 8)}...)` : ""}.</div>
+                  <div>Motivo: {selectedSwapDetail.swap.reason ?? "-"}</div>
+                  <div>Registrado por: {shortUserId(selectedSwapDetail.swap.approved_by_user_id)} · {selectedSwapDetail.swap.approved_at?.slice(0, 10) ?? "-"}</div>
+                </div>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" className="min-h-9 px-3" disabled={!selectedAssignment} onClick={startSwapFromSelectedCell}>
+                <ArrowLeftRight className="h-4 w-4" />
+                Registrar cambio
+              </Button>
+              <GhostButton type="button" className="min-h-9 px-3" onClick={() => setSelectedCell(null)}>Cerrar</GhostButton>
+            </div>
+          </div>
+          {showSwapForm ? (
+            <div className="mt-4 border-t border-line pt-4">
+              <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_180px_minmax(260px,1fr)_auto] lg:items-end">
+                <Field label="Segundo empleado">
+                  <Select value={swapForm.employee_b_id} onChange={(event) => setSwapForm({ ...swapForm, employee_b_id: event.target.value })}>
+                    {visibleEmployees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}
+                  </Select>
+                </Field>
+                <Field label="Fecha segundo turno">
+                  <Input type="date" min={range.startIso} max={range.endIso} value={swapForm.employee_b_date} onChange={(event) => setSwapForm({ ...swapForm, employee_b_date: event.target.value })} />
+                </Field>
+                <Field label="Motivo">
+                  <Textarea value={swapForm.reason} onChange={(event) => setSwapForm({ ...swapForm, reason: event.target.value })} />
+                </Field>
+                <Button type="button" disabled={swapSaving || !selectedAssignment || !secondAssignment} onClick={registerSwap}>
+                  <ArrowLeftRight className="h-4 w-4" />
+                  Confirmar
+                </Button>
+              </div>
+              <div className="mt-3 grid gap-3 text-sm md:grid-cols-2">
+                <div className="rounded-md border border-line bg-paper p-3">
+                  <div className="mb-2 font-semibold">Antes</div>
+                  <div>{selectedEmployee?.name ?? "-"} {selectedCell.date} {selectedShiftType?.code ?? "Sin turno"}</div>
+                  <div>{secondEmployee?.name ?? "-"} {swapForm.employee_b_date || "-"} {secondShiftType?.code ?? (swapForm.employee_b_date ? "Sin turno" : "-")}</div>
+                </div>
+                <div className="rounded-md border border-line bg-paper p-3">
+                  <div className="mb-2 font-semibold">Después</div>
+                  <div>{selectedEmployee?.name ?? "-"} {selectedCell.date} {secondShiftType?.code ?? "-"}</div>
+                  <div>{secondEmployee?.name ?? "-"} {swapForm.employee_b_date || "-"} {selectedShiftType?.code ?? "-"}</div>
+                </div>
+              </div>
+              {!secondAssignment && swapForm.employee_b_id && swapForm.employee_b_date ? (
+                <div className="mt-3 rounded-md border border-saffron/40 bg-[#fff7df] px-3 py-2 text-sm">
+                  La segunda celda no tiene turno asignado. Elige una celda con turno para poder intercambiar.
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       <div className="spreadsheet-scroll schedule-shell overflow-x-auto overflow-y-auto rounded-md border border-line bg-white shadow-subtle">
         <table className="schedule-table w-full border-collapse text-sm" style={scheduleTableStyle}>
           <colgroup>
@@ -421,12 +646,21 @@ export default function SchedulePage() {
                   {days.map((day) => {
                     const key = `${employee.id}-${day.iso}`;
                     const assignment = assignmentByCell.get(key);
-                    const shiftType = shiftTypes.find((item) => item.id === assignment?.shift_type_id);
+                    const shiftType = assignment ? shiftTypeById.get(assignment.shift_type_id) : undefined;
+                    const isSelected = selectedCell?.employeeId === employee.id && selectedCell.date === day.iso;
+                    const isSwapAssignment = assignment?.source === "swap";
+                    const swapDetail = swapDetailFor(assignment);
                     return (
-                      <td key={day.iso} className="schedule-day-cell border-r border-line p-0" style={{ backgroundColor: shiftType?.color ?? "white" }}>
+                      <td
+                        key={day.iso}
+                        className={`schedule-day-cell relative border-r p-0 ${isSelected ? "border-2 border-ink" : isSwapAssignment ? "border-2 border-moss" : "border-line"}`}
+                        style={{ backgroundColor: shiftType?.color ?? "white" }}
+                        title={isSwapAssignment ? "Cambio de turno registrado" : undefined}
+                        onClick={() => selectCell(employee.id, day.iso)}
+                      >
                         <select
                           aria-label={`${employee.name} ${day.iso}`}
-                          className="h-full w-full appearance-none bg-transparent px-0.5 text-center text-xs font-bold outline-none"
+                          className={`h-full w-full appearance-none bg-transparent pl-0.5 text-center text-xs font-bold outline-none ${isSwapAssignment ? "pr-3" : "pr-0.5"}`}
                           value={assignment?.shift_type_id ?? ""}
                           disabled={savingCell === key}
                           onChange={(event) => saveAssignment(employee.id, day.iso, event.target.value)}
@@ -436,6 +670,14 @@ export default function SchedulePage() {
                             <option key={type.id} value={type.id}>{type.code}</option>
                           ))}
                         </select>
+                        {isSwapAssignment ? (
+                          <span
+                            className="pointer-events-none absolute right-0.5 top-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm bg-white/85 text-[10px] font-bold text-ink"
+                            title={swapDetail ? `Cambio con ${employeeById.get(swapDetail.otherEmployeeId)?.name ?? "otro empleado"}` : "Cambio de turno registrado"}
+                          >
+                            ↔
+                          </span>
+                        ) : null}
                       </td>
                     );
                   })}
@@ -508,6 +750,44 @@ export default function SchedulePage() {
           </table>
         </div>
       </div>
+      <section className="mt-5 overflow-auto rounded-md border border-line bg-white shadow-subtle">
+        <div className="border-b border-line px-4 py-3">
+          <h3 className="font-semibold">Cambios de turno</h3>
+        </div>
+        <table className="min-w-[900px] w-full border-collapse text-sm">
+          <thead className="bg-paper text-left text-xs uppercase tracking-wide text-moss">
+            <tr>
+              <th className="border-b border-line px-3 py-3">Fecha registro</th>
+              <th className="border-b border-line px-3 py-3">Trabajador A</th>
+              <th className="border-b border-line px-3 py-3">Trabajador B</th>
+              <th className="border-b border-line px-3 py-3">Turnos intercambiados</th>
+              <th className="border-b border-line px-3 py-3">Estado</th>
+              <th className="border-b border-line px-3 py-3">Registrado por</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleSwapRows.map((swap) => (
+              <tr key={swap.id} className="border-b border-line last:border-0">
+                <td className="px-3 py-3">{swap.created_at.slice(0, 10)}</td>
+                <td className="px-3 py-3 font-medium">{employeeById.get(swap.employee_a_id)?.name ?? "-"}</td>
+                <td className="px-3 py-3 font-medium">{employeeById.get(swap.employee_b_id)?.name ?? "-"}</td>
+                <td className="px-3 py-3">
+                  {swap.employee_a_original_date} {shiftTypeById.get(swap.employee_a_original_shift_id)?.code ?? "-"} ↔ {swap.employee_b_original_date} {shiftTypeById.get(swap.employee_b_original_shift_id)?.code ?? "-"}
+                </td>
+                <td className="px-3 py-3">
+                  <span className="rounded-md border border-line bg-paper px-2 py-1 text-xs font-semibold uppercase">{swap.status}</span>
+                </td>
+                <td className="px-3 py-3">{shortUserId(swap.approved_by_user_id ?? swap.requested_by_user_id)}</td>
+              </tr>
+            ))}
+            {visibleSwapRows.length === 0 ? (
+              <tr>
+                <td className="px-3 py-4 text-sm text-moss" colSpan={6}>No hay cambios de turno registrados en este mes.</td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </section>
     </PageShell>
   );
 }
