@@ -6,6 +6,7 @@ import { DepartmentBadge } from "@/components/department-badge";
 import { PageShell } from "@/components/page-shell";
 import { Button, Field, GhostButton, Input, Notice, Select, Textarea } from "@/components/ui";
 import { ALL_DEPARTMENTS, activeDepartmentOptions } from "@/lib/departments";
+import { formatDateEs } from "@/lib/dates";
 import { currentWorkloadPercentage } from "@/lib/hours";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import type { Department, Employee, EmployeeWorkloadPeriod } from "@/lib/database.types";
@@ -31,7 +32,7 @@ const emptyPeriodForm = {
 };
 
 function formatPeriod(period: EmployeeWorkloadPeriod) {
-  return `${period.start_date} - ${period.end_date ?? "Actualidad"} -> ${Number(period.workload_percentage)}%`;
+  return `${formatDateEs(period.start_date)} - ${period.end_date ? formatDateEs(period.end_date) : "Actualidad"} -> ${Number(period.workload_percentage)}%`;
 }
 
 export default function EmployeesPage() {
@@ -316,8 +317,8 @@ export default function EmployeesPage() {
                       <td className="px-3 py-3 font-medium">{employee.name}</td>
                       <td className="px-3 py-3"><DepartmentBadge department={departmentById.get(employee.department_id ?? "")} /></td>
                       <td className="px-3 py-3">{rowCurrentWorkload ? `${rowCurrentWorkload}%` : "Sin jornada"}</td>
-                      <td className="px-3 py-3">{employee.start_date}</td>
-                      <td className="px-3 py-3">{employee.end_date ?? "-"}</td>
+                      <td className="px-3 py-3">{formatDateEs(employee.start_date)}</td>
+                      <td className="px-3 py-3">{formatDateEs(employee.end_date)}</td>
                       <td className="px-3 py-3">{employee.active ? "Activo" : "Inactivo"}</td>
                       <td className="px-3 py-3">
                         <div className="flex justify-end gap-2">

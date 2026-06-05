@@ -27,6 +27,11 @@ export function monthLabel(year: number, month: number) {
   return format(new Date(year, month - 1, 1), "MMMM yyyy", { locale: es });
 }
 
+export function formatDateEs(dateIso: string | null | undefined) {
+  if (!dateIso) return "-";
+  return format(parseISO(dateIso), "dd/MM/yyyy");
+}
+
 export function enumerateDates(startIso: string, endIso: string) {
   const dates: string[] = [];
   let current = parseISO(startIso);

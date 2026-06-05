@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Plus, Save, Trash2 } from "lucide-react";
 import { PageShell } from "@/components/page-shell";
 import { Button, Field, GhostButton, Input, Notice, Select, Textarea } from "@/components/ui";
+import { formatDateEs } from "@/lib/dates";
 import { ALL_DEPARTMENTS } from "@/lib/departments";
 import type { Department, Employee, EmployeeShiftPattern, ShiftPattern, ShiftPatternDay, ShiftType } from "@/lib/database.types";
 import {
@@ -470,7 +471,7 @@ export default function PatternsPage() {
               <div className="grid gap-2 rounded-md border border-line bg-paper p-3 text-sm">
                 <div className="font-semibold">Resultado simulado</div>
                 <div className="grid gap-2 md:grid-cols-2">
-                  <Metric label="Rango" value={`${selectedSimulation.rangeStart || "-"} / ${selectedSimulation.rangeEnd || "-"}`} />
+                  <Metric label="Rango" value={`${formatDateEs(selectedSimulation.rangeStart)} / ${formatDateEs(selectedSimulation.rangeEnd)}`} />
                   <Metric label="Horas totales" value={`${formatHours(selectedSimulation.totalHours)} h`} />
                   <Metric label="Dias trabajados" value={`${selectedSimulation.workedDays}`} />
                   <Metric label="Dias libres" value={`${selectedSimulation.freeDays}`} />
@@ -545,8 +546,8 @@ export default function PatternsPage() {
                     <tr key={assignment.id} className="border-b border-line last:border-0">
                       <td className="px-3 py-3 font-medium">{employeeById.get(assignment.employee_id)?.name}</td>
                       <td className="px-3 py-3">{patternById.get(assignment.pattern_id)?.name}</td>
-                      <td className="px-3 py-3">{assignment.start_date}</td>
-                      <td className="px-3 py-3">{assignment.end_date ?? "-"}</td>
+                      <td className="px-3 py-3">{formatDateEs(assignment.start_date)}</td>
+                      <td className="px-3 py-3">{formatDateEs(assignment.end_date)}</td>
                       <td className="px-3 py-3">{assignment.start_day_index + 1}</td>
                       <td className="px-3 py-3">{assignment.is_active ? "Activa" : "Inactiva"}</td>
                       <td className="px-3 py-3 text-right">

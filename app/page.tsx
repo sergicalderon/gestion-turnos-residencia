@@ -8,7 +8,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { PageShell } from "@/components/page-shell";
 import { Button, Field, GhostButton, Input, Notice, Select, Textarea } from "@/components/ui";
 import { ALL_DEPARTMENTS, departmentSlug, findDepartmentByParam } from "@/lib/departments";
-import { monthDays, monthLabel, monthRange } from "@/lib/dates";
+import { formatDateEs, monthDays, monthLabel, monthRange } from "@/lib/dates";
 import { assignmentHours, operationalMonthlyTarget } from "@/lib/hours";
 import type { Department, DepartmentShiftCoverageRule, Employee, EmployeeWorkloadPeriod, ShiftAssignment, ShiftSwap, ShiftType } from "@/lib/database.types";
 import { generateShiftsFromPatterns } from "@/lib/pattern-generation";
@@ -545,17 +545,17 @@ export default function SchedulePage() {
             <div>
               <div className="text-xs font-semibold uppercase text-moss">Celda seleccionada</div>
               <div className="mt-1 font-semibold">
-                {selectedEmployee?.name ?? "Empleado"} · {selectedCell.date} · {selectedShiftType?.code ?? "Sin turno"}
+                {selectedEmployee?.name ?? "Empleado"} · {formatDateEs(selectedCell.date)} · {selectedShiftType?.code ?? "Sin turno"}
               </div>
               {selectedSwapDetail ? (
                 <div className="mt-2 grid gap-1 text-sm text-moss">
-                  <div>Cambio con {employeeById.get(selectedSwapDetail.otherEmployeeId)?.name ?? "otro empleado"} el {selectedSwapDetail.otherDate}.</div>
+                  <div>Cambio con {employeeById.get(selectedSwapDetail.otherEmployeeId)?.name ?? "otro empleado"} el {formatDateEs(selectedSwapDetail.otherDate)}.</div>
                   <div>
                     Turno original {shiftTypeById.get(selectedSwapDetail.originalShiftId)?.code ?? "-"}; turno actual {shiftTypeById.get(selectedSwapDetail.newShiftId)?.code ?? "-"}.
                   </div>
                   <div>Origen anterior: {selectedSwapDetail.previousSource}{selectedSwapDetail.previousSourceId ? ` (${selectedSwapDetail.previousSourceId.slice(0, 8)}...)` : ""}.</div>
                   <div>Motivo: {selectedSwapDetail.swap.reason ?? "-"}</div>
-                  <div>Registrado por: {shortUserId(selectedSwapDetail.swap.approved_by_user_id)} · {selectedSwapDetail.swap.approved_at?.slice(0, 10) ?? "-"}</div>
+                  <div>Registrado por: {shortUserId(selectedSwapDetail.swap.approved_by_user_id)} · {formatDateEs(selectedSwapDetail.swap.approved_at)}</div>
                 </div>
               ) : null}
             </div>
@@ -589,13 +589,13 @@ export default function SchedulePage() {
               <div className="mt-3 grid gap-3 text-sm md:grid-cols-2">
                 <div className="rounded-md border border-line bg-paper p-3">
                   <div className="mb-2 font-semibold">Antes</div>
-                  <div>{selectedEmployee?.name ?? "-"} {selectedCell.date} {selectedShiftType?.code ?? "Sin turno"}</div>
-                  <div>{secondEmployee?.name ?? "-"} {swapForm.employee_b_date || "-"} {secondShiftType?.code ?? (swapForm.employee_b_date ? "Sin turno" : "-")}</div>
+                  <div>{selectedEmployee?.name ?? "-"} {formatDateEs(selectedCell.date)} {selectedShiftType?.code ?? "Sin turno"}</div>
+                  <div>{secondEmployee?.name ?? "-"} {formatDateEs(swapForm.employee_b_date)} {secondShiftType?.code ?? (swapForm.employee_b_date ? "Sin turno" : "-")}</div>
                 </div>
                 <div className="rounded-md border border-line bg-paper p-3">
                   <div className="mb-2 font-semibold">Después</div>
-                  <div>{selectedEmployee?.name ?? "-"} {selectedCell.date} {secondShiftType?.code ?? "-"}</div>
-                  <div>{secondEmployee?.name ?? "-"} {swapForm.employee_b_date || "-"} {selectedShiftType?.code ?? "-"}</div>
+                  <div>{selectedEmployee?.name ?? "-"} {formatDateEs(selectedCell.date)} {secondShiftType?.code ?? "-"}</div>
+                  <div>{secondEmployee?.name ?? "-"} {formatDateEs(swapForm.employee_b_date)} {selectedShiftType?.code ?? "-"}</div>
                 </div>
               </div>
               {!secondAssignment && swapForm.employee_b_id && swapForm.employee_b_date ? (
@@ -768,11 +768,11 @@ export default function SchedulePage() {
           <tbody>
             {visibleSwapRows.map((swap) => (
               <tr key={swap.id} className="border-b border-line last:border-0">
-                <td className="px-3 py-3">{swap.created_at.slice(0, 10)}</td>
+                <td className="px-3 py-3">{formatDateEs(swap.created_at)}</td>
                 <td className="px-3 py-3 font-medium">{employeeById.get(swap.employee_a_id)?.name ?? "-"}</td>
                 <td className="px-3 py-3 font-medium">{employeeById.get(swap.employee_b_id)?.name ?? "-"}</td>
                 <td className="px-3 py-3">
-                  {swap.employee_a_original_date} {shiftTypeById.get(swap.employee_a_original_shift_id)?.code ?? "-"} ↔ {swap.employee_b_original_date} {shiftTypeById.get(swap.employee_b_original_shift_id)?.code ?? "-"}
+                  {formatDateEs(swap.employee_a_original_date)} {shiftTypeById.get(swap.employee_a_original_shift_id)?.code ?? "-"} ↔ {formatDateEs(swap.employee_b_original_date)} {shiftTypeById.get(swap.employee_b_original_shift_id)?.code ?? "-"}
                 </td>
                 <td className="px-3 py-3">
                   <span className="rounded-md border border-line bg-paper px-2 py-1 text-xs font-semibold uppercase">{swap.status}</span>

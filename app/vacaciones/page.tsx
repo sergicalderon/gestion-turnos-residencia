@@ -7,7 +7,7 @@ import { PageShell } from "@/components/page-shell";
 import { Button, Field, GhostButton, Input, Notice, Select, Textarea } from "@/components/ui";
 import type { Absence, Department, Employee, ShiftType } from "@/lib/database.types";
 import { ALL_DEPARTMENTS } from "@/lib/departments";
-import { enumerateDates } from "@/lib/dates";
+import { enumerateDates, formatDateEs } from "@/lib/dates";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase/client";
 
 type AbsenceRow = Absence & {
@@ -184,8 +184,8 @@ export default function AbsencesPage() {
                     </span>
                     <span className="ml-2">{absence.shift_types?.name}</span>
                   </td>
-                  <td className="px-3 py-3">{absence.start_date}</td>
-                  <td className="px-3 py-3">{absence.end_date}</td>
+                  <td className="px-3 py-3">{formatDateEs(absence.start_date)}</td>
+                  <td className="px-3 py-3">{formatDateEs(absence.end_date)}</td>
                   <td className="px-3 py-3">{absence.notes ?? "-"}</td>
                   <td className="px-3 py-3 text-right">
                     <GhostButton type="button" onClick={() => remove(absence)}><Trash2 className="h-4 w-4" /></GhostButton>
