@@ -196,6 +196,47 @@ export type Database = {
           }
         ];
       };
+      department_shift_coverage_rules: {
+        Row: {
+          id: string;
+          department_id: string;
+          shift_type_id: string;
+          day_of_week: number | null;
+          min_required: number;
+          max_allowed: number | null;
+          is_active: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          department_id: string;
+          shift_type_id: string;
+          day_of_week?: number | null;
+          min_required?: number;
+          max_allowed?: number | null;
+          is_active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["department_shift_coverage_rules"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "department_shift_coverage_rules_department_id_fkey";
+            columns: ["department_id"];
+            isOneToOne: false;
+            referencedRelation: "departments";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "department_shift_coverage_rules_shift_type_id_fkey";
+            columns: ["shift_type_id"];
+            isOneToOne: false;
+            referencedRelation: "shift_types";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
       shift_patterns: {
         Row: {
           id: string;
@@ -355,6 +396,7 @@ export type UserDepartment = Database["public"]["Tables"]["user_departments"]["R
 export type EmployeeWorkloadPeriod = Database["public"]["Tables"]["employee_workload_periods"]["Row"];
 export type ShiftType = Database["public"]["Tables"]["shift_types"]["Row"];
 export type ShiftAssignment = Database["public"]["Tables"]["shift_assignments"]["Row"];
+export type DepartmentShiftCoverageRule = Database["public"]["Tables"]["department_shift_coverage_rules"]["Row"];
 export type ShiftPattern = Database["public"]["Tables"]["shift_patterns"]["Row"];
 export type ShiftPatternDay = Database["public"]["Tables"]["shift_pattern_days"]["Row"];
 export type EmployeeShiftPattern = Database["public"]["Tables"]["employee_shift_patterns"]["Row"];

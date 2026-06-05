@@ -3,15 +3,31 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { ChevronLeft, ChevronRight, RefreshCw, Wand2 } from "lucide-react";
+import { getISODay } from "date-fns";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageShell } from "@/components/page-shell";
 import { Button, Field, GhostButton, Input, Notice, Select } from "@/components/ui";
 import { ALL_DEPARTMENTS, departmentSlug, findDepartmentByParam } from "@/lib/departments";
 import { monthDays, monthLabel, monthRange } from "@/lib/dates";
 import { assignmentHours, operationalMonthlyTarget } from "@/lib/hours";
-import type { Department, Employee, EmployeeWorkloadPeriod, ShiftAssignment, ShiftType } from "@/lib/database.types";
+import type { Department, DepartmentShiftCoverageRule, Employee, EmployeeWorkloadPeriod, ShiftAssignment, ShiftType } from "@/lib/database.types";
 import { generateShiftsFromPatterns } from "@/lib/pattern-generation";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase/client";
+
+const NON_COVERAGE_SHIFT_CODES = new Set(["L", "V", "VAC", "VACACIONES", "LIBRE"]);
+
+function isDefaultCoverageShiftType(shiftType: ShiftType) {
+  return Number(shiftType.computable_hours) > 0 && !NON_COVERAGE_SHIFT_CODES.has(shiftType.code.trim().toUpperCase());
+}
+
+function isMissingCoverageRulesTable(error: { code?: string; message?: string } | null) {
+  if (!error) return false;
+  return (
+    error.code === "42P01" ||
+    error.code === "PGRST205" ||
+    error.message?.includes("department_shift_coverage_rules")
+  );
+}
 
 export default function SchedulePage() {
   const router = useRouter();
@@ -25,6 +41,8 @@ export default function SchedulePage() {
   const [workloadPeriods, setWorkloadPeriods] = useState<EmployeeWorkloadPeriod[]>([]);
   const [shiftTypes, setShiftTypes] = useState<ShiftType[]>([]);
   const [monthAssignments, setMonthAssignments] = useState<ShiftAssignment[]>([]);
+  const [coverageRules, setCoverageRules] = useState<DepartmentShiftCoverageRule[]>([]);
+  const [selectedCoverageShiftTypeIds, setSelectedCoverageShiftTypeIds] = useState<string[] | null>(null);
   const [message, setMessage] = useState("");
   const [savingCell, setSavingCell] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -58,6 +76,49 @@ export default function SchedulePage() {
     return new Map(monthAssignments.map((assignment) => [`${assignment.employee_id}-${assignment.date}`, assignment]));
   }, [monthAssignments]);
 
+  const coverageShiftTypes = useMemo(() => {
+    const available = selectedDepartmentId === ALL_DEPARTMENTS
+      ? shiftTypes
+      : shiftTypes.filter((type) => !type.department_id || type.department_id === selectedDepartmentId);
+    return [...available].sort((first, second) => first.code.localeCompare(second.code));
+  }, [selectedDepartmentId, shiftTypes]);
+
+  const defaultCoverageShiftTypeIds = useMemo(() => {
+    return coverageShiftTypes.filter(isDefaultCoverageShiftType).map((type) => type.id);
+  }, [coverageShiftTypes]);
+
+  const activeCoverageShiftTypeIds = selectedCoverageShiftTypeIds ?? defaultCoverageShiftTypeIds;
+
+  const visibleCoverageShiftTypes = useMemo(() => {
+    const activeIds = new Set(activeCoverageShiftTypeIds);
+    return coverageShiftTypes.filter((type) => activeIds.has(type.id));
+  }, [activeCoverageShiftTypeIds, coverageShiftTypes]);
+
+  const visibleEmployeeIds = useMemo(() => new Set(visibleEmployees.map((employee) => employee.id)), [visibleEmployees]);
+
+  const coverageCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const assignment of monthAssignments) {
+      if (!visibleEmployeeIds.has(assignment.employee_id)) continue;
+      const key = `${assignment.shift_type_id}-${assignment.date}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return counts;
+  }, [monthAssignments, visibleEmployeeIds]);
+
+  const coverageRuleByShiftAndDay = useMemo(() => {
+    const exactRules = new Map<string, DepartmentShiftCoverageRule>();
+    const defaultRules = new Map<string, DepartmentShiftCoverageRule>();
+    for (const rule of coverageRules) {
+      if (rule.day_of_week === null) {
+        defaultRules.set(rule.shift_type_id, rule);
+      } else {
+        exactRules.set(`${rule.shift_type_id}-${rule.day_of_week}`, rule);
+      }
+    }
+    return { exactRules, defaultRules };
+  }, [coverageRules]);
+
   const loadData = useCallback(async () => {
     if (!supabase) return;
     setMessage("");
@@ -81,8 +142,15 @@ export default function SchedulePage() {
       .select("*")
       .gte("date", range.startIso)
       .lte("date", range.endIso);
+    const { data: coverageRuleData, error: coverageRuleError } = selectedDepartmentId === ALL_DEPARTMENTS
+      ? { data: [], error: null }
+      : await supabase
+        .from("department_shift_coverage_rules")
+        .select("*")
+        .eq("department_id", selectedDepartmentId)
+        .eq("is_active", true);
 
-    const error = employeeError ?? workloadError ?? typeError ?? departmentError ?? monthError;
+    const error = employeeError ?? workloadError ?? typeError ?? departmentError ?? monthError ?? (isMissingCoverageRulesTable(coverageRuleError) ? null : coverageRuleError);
     if (error) setMessage(error.message);
     setEmployees(employeeData ?? []);
     const nextDepartments = departmentData ?? [];
@@ -92,7 +160,8 @@ export default function SchedulePage() {
     setWorkloadPeriods(workloadData ?? []);
     setShiftTypes(typeData ?? []);
     setMonthAssignments(monthData ?? []);
-  }, [range.endIso, range.startIso, searchParams]);
+    setCoverageRules((coverageRuleData as DepartmentShiftCoverageRule[] | null) ?? []);
+  }, [range.endIso, range.startIso, searchParams, selectedDepartmentId]);
 
   useEffect(() => {
     loadData();
@@ -114,6 +183,7 @@ export default function SchedulePage() {
 
   function changeDepartment(departmentId: string) {
     setSelectedDepartmentId(departmentId);
+    setSelectedCoverageShiftTypeIds(null);
     if (departmentId === ALL_DEPARTMENTS) {
       router.replace("/");
       return;
@@ -175,6 +245,34 @@ export default function SchedulePage() {
     } finally {
       setGenerating(false);
     }
+  }
+
+  function toggleCoverageShiftType(shiftTypeId: string) {
+    setSelectedCoverageShiftTypeIds((current) => {
+      const activeIds = new Set(current ?? defaultCoverageShiftTypeIds);
+      if (activeIds.has(shiftTypeId)) {
+        activeIds.delete(shiftTypeId);
+      } else {
+        activeIds.add(shiftTypeId);
+      }
+      return Array.from(activeIds);
+    });
+  }
+
+  function coverageRuleFor(shiftTypeId: string, date: Date) {
+    const dayOfWeek = getISODay(date);
+    return (
+      coverageRuleByShiftAndDay.exactRules.get(`${shiftTypeId}-${dayOfWeek}`) ??
+      coverageRuleByShiftAndDay.defaultRules.get(shiftTypeId) ??
+      null
+    );
+  }
+
+  function coverageStatusClass(count: number, rule: DepartmentShiftCoverageRule | null) {
+    if (!rule) return "text-ink";
+    if (count < rule.min_required) return "bg-[#fff0ed] text-coral";
+    if (rule.max_allowed !== null && count > rule.max_allowed) return "bg-[#fff7dc] text-[#9a6500]";
+    return "text-ink";
   }
 
   function employeeSummary(employee: Employee) {
@@ -352,6 +450,63 @@ export default function SchedulePage() {
           </tbody>
         </table>
         {visibleEmployees.length === 0 ? <div className="px-4 py-8 text-center text-sm text-moss">No hay empleados activos para este mes.</div> : null}
+        <div className="border-t border-line bg-white">
+          <div className="sticky left-0 z-10 border-b border-line bg-white px-3 py-3">
+            <div className="mb-2 text-sm font-semibold">Resumen diario por turno</div>
+            <div className="flex flex-wrap gap-2">
+              {coverageShiftTypes.map((type) => {
+                const checked = activeCoverageShiftTypeIds.includes(type.id);
+                return (
+                  <label key={type.id} className={`inline-flex items-center gap-2 rounded-md border px-2 py-1 text-xs font-semibold ${checked ? "border-ink bg-paper text-ink" : "border-line bg-white text-moss"}`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleCoverageShiftType(type.id)}
+                    />
+                    <span className="inline-flex rounded px-1.5 py-0.5" style={{ backgroundColor: type.color }}>{type.code}</span>
+                  </label>
+                );
+              })}
+              <button type="button" className="rounded-md border border-line px-2 py-1 text-xs font-semibold text-moss hover:bg-paper hover:text-ink" onClick={() => setSelectedCoverageShiftTypeIds(null)}>
+                Cobertura por defecto
+              </button>
+            </div>
+          </div>
+          <table className="schedule-table schedule-coverage-table w-full border-collapse text-sm" style={scheduleTableStyle}>
+            <colgroup>
+              <col className="schedule-employee-col" />
+              {days.map((day) => <col key={day.iso} className="schedule-day-col" />)}
+              <col className="schedule-summary-col schedule-total-col" />
+              <col className="schedule-summary-col schedule-diff-col" />
+            </colgroup>
+            <tbody>
+              {visibleCoverageShiftTypes.map((type) => (
+                <tr key={type.id} className="border-b border-line last:border-0">
+                  <th className="schedule-coverage-label sticky left-0 z-10 border-r border-line bg-paper px-2 text-left font-semibold">
+                    <span className="inline-flex rounded px-1.5 py-0.5" style={{ backgroundColor: type.color }}>{type.code}</span>
+                    <span className="ml-2 text-xs font-normal text-moss">{type.name}</span>
+                  </th>
+                  {days.map((day) => {
+                    const count = coverageCounts.get(`${type.id}-${day.iso}`) ?? 0;
+                    const rule = selectedDepartmentId === ALL_DEPARTMENTS ? null : coverageRuleFor(type.id, day.date);
+                    return (
+                      <td key={day.iso} className={`schedule-coverage-cell border-r border-line px-0.5 text-center font-semibold ${coverageStatusClass(count, rule)}`}>
+                        {count}
+                      </td>
+                    );
+                  })}
+                  <td className="schedule-summary-cell schedule-summary-col border-r border-line px-3 text-right text-moss"></td>
+                  <td className="schedule-summary-cell schedule-summary-col px-3 text-right text-moss"></td>
+                </tr>
+              ))}
+              {visibleCoverageShiftTypes.length === 0 ? (
+                <tr>
+                  <td className="px-3 py-4 text-sm text-moss" colSpan={days.length + 3}>Selecciona al menos un tipo de turno para ver el resumen.</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
       </div>
     </PageShell>
   );
