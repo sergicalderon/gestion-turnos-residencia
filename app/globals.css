@@ -73,7 +73,9 @@ textarea {
 
 .schedule-employee-cell,
 .schedule-day-cell,
-.schedule-summary-cell {
+.schedule-summary-cell,
+.schedule-coverage-label,
+.schedule-coverage-cell {
   height: var(--row-height);
   max-height: var(--row-height);
 }
@@ -120,6 +122,20 @@ textarea {
   text-align-last: center;
 }
 
+.schedule-coverage-table {
+  min-width: 1080px;
+}
+
+.schedule-coverage-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.schedule-coverage-cell {
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 1023px) {
   .schedule-summary-col,
   .schedule-summary-header,
@@ -132,6 +148,10 @@ textarea {
   }
 
   .schedule-table {
+    min-width: calc(var(--employee-width) + (var(--day-count) * 36px));
+  }
+
+  .schedule-coverage-table {
     min-width: calc(var(--employee-width) + (var(--day-count) * 36px));
   }
 }
