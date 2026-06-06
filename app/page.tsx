@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
-import { ArrowLeftRight, ChevronLeft, ChevronRight, RefreshCw, Wand2 } from "lucide-react";
+import { ArrowLeftRight, ChevronLeft, ChevronRight, FileDown, FileSpreadsheet, RefreshCw, Wand2 } from "lucide-react";
 import { getISODay } from "date-fns";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageShell } from "@/components/page-shell";
@@ -12,6 +12,7 @@ import { formatDateEs, monthDays, monthLabel, monthRange } from "@/lib/dates";
 import { assignmentHours, operationalMonthlyTarget } from "@/lib/hours";
 import type { Department, DepartmentShiftCoverageRule, Employee, EmployeeWorkloadPeriod, ShiftAssignment, ShiftSwap, ShiftType } from "@/lib/database.types";
 import { generateShiftsFromPatterns } from "@/lib/pattern-generation";
+import { DEFAULT_RESIDENCE_NAME, exportScheduleExcel, exportSchedulePdf, type ScheduleExportSnapshot } from "@/lib/schedule-export";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase/client";
 
 const NON_COVERAGE_SHIFT_CODES = new Set(["L", "V", "VAC", "VACACIONES", "LIBRE"]);
@@ -81,6 +82,7 @@ export default function SchedulePage() {
   const [zoom, setZoom] = useState(1);
   const [showGenerate, setShowGenerate] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
   const [generateForm, setGenerateForm] = useState({
     start_date: "",
     end_date: "",
@@ -437,6 +439,53 @@ export default function SchedulePage() {
     };
   }
 
+  function exportSnapshot(): ScheduleExportSnapshot {
+    return {
+      residenceName: DEFAULT_RESIDENCE_NAME,
+      department: selectedDepartment?.name ?? "Todos los departamentos",
+      period: monthLabel(year, month),
+      generatedAt: new Date(),
+      days: days.map((day) => ({ iso: day.iso, day: day.day, weekday: day.weekday })),
+      employees: visibleEmployees.map((employee) => {
+        const summary = employeeSummary(employee);
+        return {
+          name: employee.name,
+          department: departments.find((department) => department.id === employee.department_id)?.name ?? "Sin departamento",
+          monthHours: summary.monthHours,
+          monthTarget: summary.monthTarget,
+          shifts: Object.fromEntries(days.map((day) => {
+            const assignment = assignmentByCell.get(`${employee.id}-${day.iso}`);
+            const shiftType = assignment ? shiftTypeById.get(assignment.shift_type_id) : undefined;
+            return [day.iso, shiftType ? { code: shiftType.code, color: shiftType.color } : undefined];
+          }))
+        };
+      }),
+      dailySummary: coverageShiftTypes.map((type) => ({
+        code: type.code,
+        name: type.name,
+        color: type.color,
+        counts: Object.fromEntries(days.map((day) => [day.iso, coverageCounts.get(`${type.id}-${day.iso}`) ?? 0]))
+      }))
+    };
+  }
+
+  async function runExport(format: "pdf" | "excel") {
+    setExporting(format);
+    setMessage("");
+    try {
+      const snapshot = exportSnapshot();
+      if (format === "pdf") {
+        await exportSchedulePdf(snapshot);
+      } else {
+        await exportScheduleExcel(snapshot);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo generar la exportación.");
+    } finally {
+      setExporting(null);
+    }
+  }
+
   const selectedSwapDetail = swapDetailFor(selectedAssignment ?? undefined);
   const visibleSwapRows = monthSwaps.filter((swap) => {
     if (selectedDepartmentId === ALL_DEPARTMENTS) return true;
@@ -480,7 +529,13 @@ export default function SchedulePage() {
             ))}
           </div>
           <Button type="button" onClick={() => setShowGenerate((current) => !current)} className="min-h-9 px-3"><Wand2 className="h-4 w-4" />Generar</Button>
-          <GhostButton type="button" onClick={loadData} className="min-h-9 px-2.5"><RefreshCw className="h-4 w-4" /></GhostButton>
+          <GhostButton type="button" disabled={exporting !== null || visibleEmployees.length === 0} onClick={() => runExport("pdf")} className="min-h-9 px-3">
+            <FileDown className="h-4 w-4" />{exporting === "pdf" ? "Exportando..." : "Exportar PDF"}
+          </GhostButton>
+          <GhostButton type="button" disabled={exporting !== null || visibleEmployees.length === 0} onClick={() => runExport("excel")} className="min-h-9 px-3">
+            <FileSpreadsheet className="h-4 w-4" />{exporting === "excel" ? "Exportando..." : "Exportar Excel"}
+          </GhostButton>
+          <GhostButton type="button" onClick={loadData} className="min-h-9 px-3"><RefreshCw className="h-4 w-4" />Actualizar</GhostButton>
         </>
       }
     >
