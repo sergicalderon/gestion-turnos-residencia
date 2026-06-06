@@ -83,48 +83,75 @@ export async function exportSchedulePdf(snapshot: ScheduleExportSnapshot) {
     import("jspdf-autotable")
   ]);
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a3" });
-  const generatedLabel = snapshot.generatedAt.toLocaleString("es-ES");
+  const generatedLabel = snapshot.generatedAt.toLocaleString("es-ES", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
+  const horizontalMargin = 6;
+  const tableStartY = 24;
+  const footerMargin = 10;
+  const employeeColumnWidth = 48;
+  const dayColumnWidth = (pageWidth - (horizontalMargin * 2) - employeeColumnWidth) / snapshot.days.length;
+  const fontSize = Math.max(6.5, Math.min(8, dayColumnWidth * 0.7));
+  const verticalPadding = snapshot.employees.length <= 24 ? 1.8 : snapshot.employees.length <= 36 ? 1.25 : 0.85;
 
   const drawHeader = () => {
     doc.setTextColor(23, 32, 27);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.text(snapshot.residenceName, 10, 10);
-    doc.setFontSize(11);
-    doc.text(`Planilla mensual · ${snapshot.department}`, 10, 16);
+    doc.setFontSize(13);
+    doc.text(snapshot.residenceName, horizontalMargin, 8);
+    doc.setFontSize(10);
+    doc.text(snapshot.department, horizontalMargin, 14);
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(snapshot.period, 10, 21);
-    doc.text(`Generado: ${generatedLabel}`, pageWidth - 10, 10, { align: "right" });
+    doc.setFontSize(10);
+    doc.text(snapshot.period, pageWidth - horizontalMargin, 14, { align: "right" });
+    doc.setDrawColor(180, 190, 184);
+    doc.setLineWidth(0.25);
+    doc.line(horizontalMargin, 18, pageWidth - horizontalMargin, 18);
   };
 
   const dayColumns = snapshot.days.map((day) => `${day.weekday.toUpperCase()}\n${day.day}`);
   const mainBody = snapshot.employees.map((employee) => [
     employee.name,
-    ...snapshot.days.map((day) => employee.shifts[day.iso]?.code ?? ""),
-    employee.monthHours.toFixed(1)
+    ...snapshot.days.map((day) => employee.shifts[day.iso]?.code ?? "")
   ]);
   const dayColumnStyles = Object.fromEntries(
-    snapshot.days.map((_, index) => [index + 1, { cellWidth: 9, halign: "center" as const }])
+    snapshot.days.map((_, index) => [index + 1, { cellWidth: dayColumnWidth, halign: "center" as const }])
   );
 
   autoTable(doc, {
-    head: [["Empleado", ...dayColumns, "Horas"]],
+    head: [["Empleado", ...dayColumns]],
     body: mainBody,
-    startY: 27,
-    margin: { top: 27, right: 10, bottom: 18, left: 10 },
+    startY: tableStartY,
+    margin: { top: tableStartY, right: horizontalMargin, bottom: footerMargin, left: horizontalMargin },
     theme: "grid",
-    styles: { fontSize: 6.5, cellPadding: 1.2, valign: "middle", lineColor: [210, 218, 213], lineWidth: 0.15 },
-    headStyles: { fillColor: [237, 242, 239], textColor: [23, 32, 27], fontStyle: "bold", halign: "center" },
+    styles: {
+      fontSize,
+      cellPadding: { top: verticalPadding, right: 0.6, bottom: verticalPadding, left: 0.6 },
+      valign: "middle",
+      overflow: "ellipsize",
+      lineColor: [180, 190, 184],
+      lineWidth: 0.18,
+      textColor: [23, 32, 27]
+    },
+    headStyles: {
+      fillColor: [237, 242, 239],
+      textColor: [23, 32, 27],
+      fontStyle: "bold",
+      halign: "center",
+      lineWidth: 0.22
+    },
     columnStyles: {
-      0: { cellWidth: 40, fontStyle: "bold" },
-      ...dayColumnStyles,
-      [snapshot.days.length + 1]: { cellWidth: 17, halign: "right", fontStyle: "bold" }
+      0: { cellWidth: employeeColumnWidth, fontStyle: "bold", halign: "left" },
+      ...dayColumnStyles
     },
     didParseCell: (data: CellHookData) => {
-      if (data.section !== "body" || data.column.index === 0 || data.column.index > snapshot.days.length) return;
+      if (data.section !== "body" || data.column.index === 0) return;
       const employee = snapshot.employees[data.row.index];
       const day = snapshot.days[data.column.index - 1];
       const shift = employee?.shifts[day?.iso];
@@ -133,38 +160,16 @@ export async function exportSchedulePdf(snapshot: ScheduleExportSnapshot) {
     didDrawPage: drawHeader
   });
 
-  const lastTable = doc as typeof doc & { lastAutoTable: { finalY: number } };
-  const summaryStartY = lastTable.lastAutoTable.finalY + 7;
-  autoTable(doc, {
-    head: [["Resumen diario por turno", ...dayColumns]],
-    body: snapshot.dailySummary.map((summary) => [
-      `${summary.code} · ${summary.name}`,
-      ...snapshot.days.map((day) => summary.counts[day.iso] ?? 0)
-    ]),
-    startY: summaryStartY,
-    margin: { top: 27, right: 10, bottom: 18, left: 10 },
-    theme: "grid",
-    styles: { fontSize: 6.5, cellPadding: 1.1, valign: "middle", lineColor: [210, 218, 213], lineWidth: 0.15 },
-    headStyles: { fillColor: [237, 242, 239], textColor: [23, 32, 27], fontStyle: "bold", halign: "center" },
-    columnStyles: { 0: { cellWidth: 40, fontStyle: "bold" }, ...dayColumnStyles },
-    didParseCell: (data: CellHookData) => {
-      if (data.section !== "body" || data.column.index !== 0) return;
-      const summary = snapshot.dailySummary[data.row.index];
-      if (summary) data.cell.styles.fillColor = hexToRgb(summary.color);
-    },
-    didDrawPage: drawHeader
-  });
-
   const pageCount = doc.getNumberOfPages();
   for (let page = 1; page <= pageCount; page += 1) {
     doc.setPage(page);
-    doc.setDrawColor(210, 218, 213);
-    doc.line(10, pageHeight - 12, pageWidth - 10, pageHeight - 12);
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.setTextColor(90, 105, 96);
-    doc.text(`Generado: ${generatedLabel}`, 10, pageHeight - 7);
-    doc.text(`Página ${page} de ${pageCount}`, pageWidth - 10, pageHeight - 7, { align: "right" });
+    doc.setFontSize(6);
+    doc.setTextColor(110, 120, 114);
+    doc.text(`Generado: ${generatedLabel}`, horizontalMargin, pageHeight - 4);
+    if (pageCount > 1) {
+      doc.text(`${page} / ${pageCount}`, pageWidth - horizontalMargin, pageHeight - 4, { align: "right" });
+    }
   }
 
   doc.save(exportFilename(snapshot, "pdf"));
