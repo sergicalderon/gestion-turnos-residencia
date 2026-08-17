@@ -2,11 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Save, Trash2 } from "lucide-react";
+import { endOfYear, format, parseISO } from "date-fns";
 import { PageShell } from "@/components/page-shell";
 import { Button, Field, GhostButton, Input, Notice, Select, Textarea } from "@/components/ui";
 import { formatDateEs } from "@/lib/dates";
 import { ALL_DEPARTMENTS } from "@/lib/departments";
 import type { Department, Employee, EmployeeShiftPattern, ShiftPattern, ShiftPatternDay, ShiftType } from "@/lib/database.types";
+import { generateShiftsFromPatterns, logPatternGenerationDev } from "@/lib/pattern-generation";
 import {
   patternCycleStats,
   simulatePatternYear,
@@ -16,7 +18,7 @@ import {
 } from "@/lib/pattern-analytics";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase/client";
 
-const todayIso = new Date().toISOString().slice(0, 10);
+const todayIso = format(new Date(), "yyyy-MM-dd");
 const currentYear = new Date().getFullYear();
 
 type PatternForm = {
@@ -50,7 +52,7 @@ export default function PatternsPage() {
     pattern_id: "",
     start_date: todayIso,
     end_date: "",
-    start_day_index: 0,
+    start_day_index: 1,
     is_active: true
   });
   const [simulationForm, setSimulationForm] = useState({
@@ -64,6 +66,7 @@ export default function PatternsPage() {
   });
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [applyingAssignment, setApplyingAssignment] = useState(false);
 
   const shiftTypeById = useMemo(() => new Map(shiftTypes.map((type) => [type.id, type])), [shiftTypes]);
   const patternDaysById = useMemo(() => {
@@ -138,7 +141,6 @@ export default function PatternsPage() {
 
   async function loadData() {
     if (!supabase) return;
-    setMessage("");
     const [
       { data: patternData, error: patternError },
       { data: dayData, error: dayError },
@@ -263,24 +265,115 @@ export default function PatternsPage() {
     if (!supabase) return;
     setMessage("");
     const selectedDays = patternDays.filter((day) => day.pattern_id === assignmentForm.pattern_id);
+    const employee = employeeById.get(assignmentForm.employee_id);
+    const pattern = patternById.get(assignmentForm.pattern_id);
+    const startDayNumber = Number(assignmentForm.start_day_index);
+    const storedStartDayIndex = startDayNumber - 1;
     if (selectedDays.length === 0) {
       setMessage("No se puede asignar un patron sin dias.");
       return;
     }
-    if (Number(assignmentForm.start_day_index) >= selectedDays.length) {
-      setMessage("El dia inicial del ciclo no puede superar la longitud del patron.");
+    if (!employee || !pattern) {
+      setMessage("Selecciona un empleado y un patron validos.");
       return;
     }
-    const { error } = await supabase.from("employee_shift_patterns").insert({
-      employee_id: assignmentForm.employee_id,
-      pattern_id: assignmentForm.pattern_id,
-      start_date: assignmentForm.start_date,
-      end_date: assignmentForm.end_date || null,
-      start_day_index: Number(assignmentForm.start_day_index),
-      is_active: assignmentForm.is_active
-    });
-    if (error) setMessage(error.message);
-    await loadData();
+    if (startDayNumber < 1 || storedStartDayIndex >= selectedDays.length) {
+      setMessage("El dia inicial del ciclo debe estar entre 1 y la longitud del patron.");
+      return;
+    }
+    const generationEndDate = assignmentForm.end_date || format(endOfYear(parseISO(assignmentForm.start_date)), "yyyy-MM-dd");
+    const confirmed = window.confirm([
+      "Se va a asignar este patron:",
+      `Empleado: ${employee.name}`,
+      `Patron: ${pattern.name}`,
+      `Fecha de inicio: ${formatDateEs(assignmentForm.start_date)}`,
+      `Fecha de fin: ${assignmentForm.end_date ? formatDateEs(assignmentForm.end_date) : `Sin fecha fin (se generaran turnos hasta ${formatDateEs(generationEndDate)})`}`,
+      `Dia inicial del ciclo: ${startDayNumber}`,
+      "Los turnos existentes no se sobrescribiran."
+    ].join("\n"));
+    if (!confirmed) {
+      return;
+    }
+
+    setApplyingAssignment(true);
+    setMessage("Aplicando patron...");
+    let createdAssignmentId: string | null = null;
+    try {
+      const { data: assignment, error } = await supabase.from("employee_shift_patterns").insert({
+        employee_id: assignmentForm.employee_id,
+        pattern_id: assignmentForm.pattern_id,
+        start_date: assignmentForm.start_date,
+        end_date: assignmentForm.end_date || null,
+        start_day_index: storedStartDayIndex,
+        is_active: assignmentForm.is_active
+      }).select("*").single();
+      if (error) throw new Error(error.message);
+      createdAssignmentId = assignment.id;
+
+      logPatternGenerationDev("assignment-created", {
+        employee_id: assignment.employee_id,
+        pattern_id: assignment.pattern_id,
+        assignment_id: assignment.id,
+        start_date: assignment.start_date,
+        end_date: assignment.end_date,
+        start_day_index: assignment.start_day_index
+      });
+
+      const result = await generateShiftsFromPatterns(supabase, {
+        startDate: assignment.start_date,
+        endDate: generationEndDate,
+        employeeIds: [assignment.employee_id],
+        employeeShiftPatternIds: [assignment.id],
+        overwriteExisting: false
+      });
+
+      logPatternGenerationDev("assignment-generated", {
+        employee_id: assignment.employee_id,
+        pattern_id: assignment.pattern_id,
+        assignment_id: assignment.id,
+        start_date: assignment.start_date,
+        end_date: generationEndDate,
+        start_day_index: assignment.start_day_index,
+        generated: result.generated,
+        skippedExisting: result.skippedExisting
+      });
+
+      if (result.generated > 0 && result.skippedExisting > 0) {
+        setMessage(`Patron asignado correctamente. Se han generado ${result.generated} turnos y se han omitido ${result.skippedExisting} dias porque ya tenian turno asignado.`);
+      } else if (result.generated > 0) {
+        setMessage(`Patron asignado correctamente a ${employee.name}. Se han generado ${result.generated} turnos.`);
+      } else if (result.skippedExisting > 0) {
+        setMessage(`Patron asignado correctamente a ${employee.name}, pero no se generaron turnos porque ${result.skippedExisting} dias ya tenian turno asignado.`);
+      } else if (result.skippedEmptyPatterns > 0) {
+        setMessage(`Patron asignado correctamente a ${employee.name}, pero no se generaron turnos porque el patron no tiene dias disponibles.`);
+      } else if (result.skippedInactiveEmployees > 0) {
+        setMessage(`Patron asignado correctamente a ${employee.name}, pero no se generaron turnos porque el empleado no esta activo en el rango seleccionado.`);
+      } else {
+        setMessage(`Patron asignado correctamente a ${employee.name}, pero no se generaron turnos porque el rango de fechas no contiene dias aplicables.`);
+      }
+      await loadData();
+    } catch (error) {
+      if (createdAssignmentId) {
+        const cleanupResult = await supabase.from("employee_shift_patterns").delete().eq("id", createdAssignmentId);
+        logPatternGenerationDev("assignment-cleanup-after-error", {
+          employee_id: assignmentForm.employee_id,
+          pattern_id: assignmentForm.pattern_id,
+          assignment_id: createdAssignmentId,
+          error: cleanupResult.error ?? error
+        });
+      }
+      logPatternGenerationDev("assignment-error", {
+        employee_id: assignmentForm.employee_id,
+        pattern_id: assignmentForm.pattern_id,
+        start_date: assignmentForm.start_date,
+        end_date: generationEndDate,
+        start_day_index: storedStartDayIndex,
+        error
+      });
+      setMessage(`No se pudo aplicar el patron: ${error instanceof Error ? error.message : "Error desconocido"}.`);
+    } finally {
+      setApplyingAssignment(false);
+    }
   }
 
   async function deactivateAssignment(assignment: EmployeeShiftPattern) {
@@ -518,13 +611,15 @@ export default function PatternsPage() {
                 <Field label="Fecha inicio"><Input type="date" value={assignmentForm.start_date} onChange={(event) => setAssignmentForm({ ...assignmentForm, start_date: event.target.value })} /></Field>
                 <Field label="Fecha fin"><Input type="date" value={assignmentForm.end_date} onChange={(event) => setAssignmentForm({ ...assignmentForm, end_date: event.target.value })} /></Field>
                 <Field label="Dia inicial del ciclo">
-                  <Input type="number" min="0" value={assignmentForm.start_day_index} onChange={(event) => setAssignmentForm({ ...assignmentForm, start_day_index: Number(event.target.value) })} />
+                  <Input type="number" min="1" value={assignmentForm.start_day_index} onChange={(event) => setAssignmentForm({ ...assignmentForm, start_day_index: Number(event.target.value) })} />
                 </Field>
                 <label className="flex items-center gap-2 text-sm font-medium">
                   <input type="checkbox" checked={assignmentForm.is_active} onChange={(event) => setAssignmentForm({ ...assignmentForm, is_active: event.target.checked })} />
                   Activa
                 </label>
-                <Button type="button" disabled={!assignmentForm.employee_id || !assignmentForm.pattern_id} onClick={saveAssignment}>Asignar patron</Button>
+                <Button type="button" disabled={applyingAssignment || !assignmentForm.employee_id || !assignmentForm.pattern_id} onClick={saveAssignment}>
+                  {applyingAssignment ? "Aplicando patron..." : "Asignar patron"}
+                </Button>
               </div>
             </form>
 

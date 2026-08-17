@@ -171,7 +171,6 @@ export default function SchedulePage() {
 
   const loadData = useCallback(async () => {
     if (!supabase) return;
-    setMessage("");
     const { data: employeeData, error: employeeError } = await supabase
       .from("employees")
       .select("*")
@@ -381,7 +380,7 @@ export default function SchedulePage() {
   async function generatePatternAssignments() {
     if (!supabase) return;
     setGenerating(true);
-    setMessage("");
+    setMessage("Aplicando patron...");
     try {
       const result = await generateShiftsFromPatterns(supabase, {
         startDate: generateForm.start_date,
@@ -389,10 +388,22 @@ export default function SchedulePage() {
         employeeIds: generateForm.allEmployees ? visibleEmployees.map((employee) => employee.id) : generateForm.employeeIds,
         overwriteExisting: generateForm.overwriteExisting
       });
-      setMessage(`Generados ${result.generated} turnos. Omitidos por existentes: ${result.skippedExisting}.`);
+      if (result.generated > 0 && result.skippedExisting > 0) {
+        setMessage(`Patrones aplicados correctamente. Se han generado ${result.generated} turnos y se han omitido ${result.skippedExisting} dias porque ya tenian turno asignado.`);
+      } else if (result.generated > 0) {
+        setMessage(`Patrones aplicados correctamente. Se han generado ${result.generated} turnos.`);
+      } else if (result.skippedExisting > 0) {
+        setMessage(`No se generaron turnos porque ${result.skippedExisting} dias ya tenian turno asignado.`);
+      } else if (result.skippedEmptyPatterns > 0) {
+        setMessage("No se generaron turnos porque los patrones encontrados no tienen dias disponibles.");
+      } else if (result.skippedInactiveEmployees > 0) {
+        setMessage("No se generaron turnos porque los empleados encontrados no estan activos en el rango seleccionado.");
+      } else {
+        setMessage("No se generaron turnos: revisa que existan patrones activos para los empleados y que el rango de fechas contenga dias aplicables.");
+      }
       await loadData();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "No se pudieron generar los turnos.");
+      setMessage(`No se pudo aplicar el patron: ${error instanceof Error ? error.message : "Error desconocido"}.`);
     } finally {
       setGenerating(false);
     }
@@ -589,7 +600,7 @@ export default function SchedulePage() {
               onClick={generatePatternAssignments}
             >
               <Wand2 className="h-4 w-4" />
-              Generar
+              {generating ? "Aplicando patron..." : "Generar"}
             </Button>
           </div>
         </div>

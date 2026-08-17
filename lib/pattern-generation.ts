@@ -10,6 +10,7 @@ export type GeneratePatternParams = {
   startDate: string;
   endDate: string;
   employeeIds?: string[];
+  employeeShiftPatternIds?: string[];
   overwriteExisting: boolean;
 };
 
@@ -19,6 +20,23 @@ export type GeneratePatternResult = {
   skippedInactiveEmployees: number;
   skippedEmptyPatterns: number;
 };
+
+type DevLogInput = {
+  employee_id?: string;
+  pattern_id?: string;
+  assignment_id?: string;
+  start_date?: string;
+  end_date?: string | null;
+  start_day_index?: number;
+  generated?: number;
+  skippedExisting?: number;
+  error?: unknown;
+};
+
+export function logPatternGenerationDev(context: string, input: DevLogInput) {
+  if (process.env.NODE_ENV !== "development") return;
+  console.info(`[pattern-generation] ${context}`, input);
+}
 
 function mod(value: number, divisor: number) {
   return ((value % divisor) + divisor) % divisor;
@@ -42,9 +60,19 @@ export async function generateShiftsFromPatterns(
   if (params.employeeIds?.length) {
     assignmentsQuery = assignmentsQuery.in("employee_id", params.employeeIds);
   }
+  if (params.employeeShiftPatternIds?.length) {
+    assignmentsQuery = assignmentsQuery.in("id", params.employeeShiftPatternIds);
+  }
 
   const { data: employeePatterns, error: employeePatternError } = await assignmentsQuery;
-  if (employeePatternError) throw new Error(employeePatternError.message);
+  if (employeePatternError) {
+    logPatternGenerationDev("employee-pattern-query-error", {
+      start_date: params.startDate,
+      end_date: params.endDate,
+      error: employeePatternError
+    });
+    throw new Error(employeePatternError.message);
+  }
   if (!employeePatterns?.length) {
     return { generated: 0, skippedExisting: 0, skippedInactiveEmployees: 0, skippedEmptyPatterns: 0 };
   }
@@ -70,7 +98,14 @@ export async function generateShiftsFromPatterns(
   ]);
 
   const error = employeesError ?? patternsError ?? patternDaysError ?? existingError;
-  if (error) throw new Error(error.message);
+  if (error) {
+    logPatternGenerationDev("source-data-query-error", {
+      start_date: params.startDate,
+      end_date: params.endDate,
+      error
+    });
+    throw new Error(error.message);
+  }
 
   const employeesById = new Map((employees ?? []).map((employee) => [employee.id, employee]));
   const patternsById = new Map((patterns ?? []).map((pattern) => [pattern.id, pattern]));
@@ -110,6 +145,8 @@ export async function generateShiftsFromPatterns(
 
     if (effectiveEnd < effectiveStart) continue;
 
+    const generatedBefore = rows.length;
+    const skippedBefore = skippedExisting;
     for (const date of enumerateDates(effectiveStart, effectiveEnd)) {
       const existing = existingByCell.get(`${assignment.employee_id}-${date}`);
       if (existing && !params.overwriteExisting) {
@@ -130,6 +167,16 @@ export async function generateShiftsFromPatterns(
         generated_at: new Date().toISOString()
       });
     }
+    logPatternGenerationDev("assignment-planned", {
+      employee_id: assignment.employee_id,
+      pattern_id: assignment.pattern_id,
+      assignment_id: assignment.id,
+      start_date: effectiveStart,
+      end_date: effectiveEnd,
+      start_day_index: assignment.start_day_index,
+      generated: rows.length - generatedBefore,
+      skippedExisting: skippedExisting - skippedBefore
+    });
   }
 
   if (rows.length === 0) {
@@ -140,12 +187,28 @@ export async function generateShiftsFromPatterns(
     ? await client.from("shift_assignments").upsert(rows, { onConflict: "employee_id,date" })
     : await client.from("shift_assignments").insert(rows);
 
-  if (result.error) throw new Error(result.error.message);
+  if (result.error) {
+    logPatternGenerationDev("supabase-error", {
+      start_date: params.startDate,
+      end_date: params.endDate,
+      generated: rows.length,
+      skippedExisting,
+      error: result.error
+    });
+    throw new Error(result.error.message);
+  }
 
-  return {
+  const generationResult = {
     generated: rows.length,
     skippedExisting,
     skippedInactiveEmployees,
     skippedEmptyPatterns
   };
+  logPatternGenerationDev("completed", {
+    start_date: params.startDate,
+    end_date: params.endDate,
+    generated: generationResult.generated,
+    skippedExisting: generationResult.skippedExisting
+  });
+  return generationResult;
 }
