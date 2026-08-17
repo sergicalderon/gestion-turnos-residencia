@@ -7,6 +7,7 @@ import { getISODay } from "date-fns";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageShell } from "@/components/page-shell";
 import { Button, Field, GhostButton, Input, Notice, Select, Textarea } from "@/components/ui";
+import { useToast } from "@/components/toast-provider";
 import { ALL_DEPARTMENTS, departmentSlug, findDepartmentByParam } from "@/lib/departments";
 import { formatDateEs, monthDays, monthLabel, monthRange } from "@/lib/dates";
 import { assignmentHours, operationalMonthlyTarget } from "@/lib/hours";
@@ -69,7 +70,6 @@ export default function SchedulePage() {
   const [monthSwaps, setMonthSwaps] = useState<ShiftSwap[]>([]);
   const [coverageRules, setCoverageRules] = useState<DepartmentShiftCoverageRule[]>([]);
   const [selectedCoverageShiftTypeIds, setSelectedCoverageShiftTypeIds] = useState<string[] | null>(null);
-  const [message, setMessage] = useState("");
   const [savingCell, setSavingCell] = useState<string | null>(null);
   const [selectedCell, setSelectedCell] = useState<SelectedCell | null>(null);
   const [showSwapForm, setShowSwapForm] = useState(false);
@@ -90,6 +90,7 @@ export default function SchedulePage() {
     employeeIds: [] as string[],
     overwriteExisting: false
   });
+  const { toast } = useToast();
 
   const days = useMemo(() => monthDays(year, month), [year, month]);
   const range = useMemo(() => monthRange(year, month), [year, month]);
@@ -205,7 +206,7 @@ export default function SchedulePage() {
         .eq("is_active", true);
 
     const error = employeeError ?? workloadError ?? typeError ?? departmentError ?? monthError ?? (isMissingShiftSwapsTable(swapError) ? null : swapError) ?? (isMissingCoverageRulesTable(coverageRuleError) ? null : coverageRuleError);
-    if (error) setMessage(error.message);
+    if (error) toast({ type: "error", title: "No se pudo cargar la planilla", description: error.message });
     setEmployees(employeeData ?? []);
     const nextDepartments = departmentData ?? [];
     setDepartments(nextDepartments);
@@ -216,7 +217,7 @@ export default function SchedulePage() {
     setMonthAssignments(monthData ?? []);
     setMonthSwaps((swapData as ShiftSwap[] | null) ?? []);
     setCoverageRules((coverageRuleData as DepartmentShiftCoverageRule[] | null) ?? []);
-  }, [range.endIso, range.startIso, searchParams, selectedDepartmentId]);
+  }, [range.endIso, range.startIso, searchParams, selectedDepartmentId, toast]);
 
   useEffect(() => {
     loadData();
@@ -274,10 +275,9 @@ export default function SchedulePage() {
 
   function startSwapFromSelectedCell() {
     if (!selectedCell || !selectedAssignment) {
-      setMessage("Selecciona una celda con turno asignado para registrar un cambio.");
+      toast({ type: "warning", title: "Selecciona un turno", description: "Selecciona una celda con turno asignado para registrar un cambio." });
       return;
     }
-    setMessage("");
     setShowSwapForm(true);
     setSwapForm((current) => ({
       ...current,
@@ -310,22 +310,21 @@ export default function SchedulePage() {
 
   async function registerSwap() {
     if (!supabase || !selectedCell) return;
-    setMessage("");
 
     if (!selectedAssignment) {
-      setMessage("La primera celda seleccionada no tiene un turno asignado.");
+      toast({ type: "warning", title: "Cambio no disponible", description: "La primera celda seleccionada no tiene un turno asignado." });
       return;
     }
     if (!swapForm.employee_b_id || !swapForm.employee_b_date) {
-      setMessage("Selecciona el segundo empleado y la fecha del segundo turno.");
+      toast({ type: "warning", title: "Seleccion incompleta", description: "Selecciona el segundo empleado y la fecha del segundo turno." });
       return;
     }
     if (selectedCell.employeeId === swapForm.employee_b_id && selectedCell.date === swapForm.employee_b_date) {
-      setMessage("No se puede registrar un cambio de turno contra la misma celda.");
+      toast({ type: "warning", title: "Cambio no valido", description: "No se puede registrar un cambio de turno contra la misma celda." });
       return;
     }
     if (!secondAssignment) {
-      setMessage("La segunda celda seleccionada no tiene un turno asignado.");
+      toast({ type: "warning", title: "Cambio no disponible", description: "La segunda celda seleccionada no tiene un turno asignado." });
       return;
     }
 
@@ -339,12 +338,12 @@ export default function SchedulePage() {
     });
 
     if (error) {
-      setMessage(error.message);
+      toast({ type: "error", title: "No se pudo registrar el cambio", description: error.message });
       setSwapSaving(false);
       return;
     }
 
-    setMessage("Cambio de turno registrado.");
+    toast({ type: "success", title: "Cambio de turno registrado" });
     setShowSwapForm(false);
     setSwapForm((current) => ({ ...current, reason: "" }));
     await loadData();
@@ -380,7 +379,6 @@ export default function SchedulePage() {
   async function generatePatternAssignments() {
     if (!supabase) return;
     setGenerating(true);
-    setMessage("Aplicando patron...");
     try {
       const result = await generateShiftsFromPatterns(supabase, {
         startDate: generateForm.start_date,
@@ -389,21 +387,29 @@ export default function SchedulePage() {
         overwriteExisting: generateForm.overwriteExisting
       });
       if (result.generated > 0 && result.skippedExisting > 0) {
-        setMessage(`Patrones aplicados correctamente. Se han generado ${result.generated} turnos y se han omitido ${result.skippedExisting} dias porque ya tenian turno asignado.`);
+        toast({
+          type: "warning",
+          title: "Patrones aplicados",
+          description: `Se generaron ${result.generated} turnos y se omitieron ${result.skippedExisting} porque ya tenian turno.`
+        });
       } else if (result.generated > 0) {
-        setMessage(`Patrones aplicados correctamente. Se han generado ${result.generated} turnos.`);
+        toast({ type: "success", title: "Patrones aplicados correctamente", description: `Se han generado ${result.generated} turnos.` });
       } else if (result.skippedExisting > 0) {
-        setMessage(`No se generaron turnos porque ${result.skippedExisting} dias ya tenian turno asignado.`);
+        toast({ type: "warning", title: "No se generaron turnos", description: `${result.skippedExisting} dias ya tenian turno asignado.` });
       } else if (result.skippedEmptyPatterns > 0) {
-        setMessage("No se generaron turnos porque los patrones encontrados no tienen dias disponibles.");
+        toast({ type: "warning", title: "No se generaron turnos", description: "Los patrones encontrados no tienen dias disponibles." });
       } else if (result.skippedInactiveEmployees > 0) {
-        setMessage("No se generaron turnos porque los empleados encontrados no estan activos en el rango seleccionado.");
+        toast({ type: "warning", title: "No se generaron turnos", description: "Los empleados encontrados no estan activos en el rango seleccionado." });
       } else {
-        setMessage("No se generaron turnos: revisa que existan patrones activos para los empleados y que el rango de fechas contenga dias aplicables.");
+        toast({ type: "warning", title: "No se generaron turnos", description: "Revisa que existan patrones activos para los empleados y que el rango de fechas contenga dias aplicables." });
       }
       await loadData();
     } catch (error) {
-      setMessage(`No se pudo aplicar el patron: ${error instanceof Error ? error.message : "Error desconocido"}.`);
+      toast({
+        type: "error",
+        title: "No se pudo aplicar el patron",
+        description: error instanceof Error ? error.message : "Error desconocido"
+      });
     } finally {
       setGenerating(false);
     }
@@ -482,7 +488,6 @@ export default function SchedulePage() {
 
   async function runExport(format: "pdf" | "excel") {
     setExporting(format);
-    setMessage("");
     try {
       const snapshot = exportSnapshot();
       if (format === "pdf") {
@@ -491,7 +496,7 @@ export default function SchedulePage() {
         await exportScheduleExcel(snapshot);
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "No se pudo generar la exportación.");
+      toast({ type: "error", title: "No se pudo generar la exportacion", description: error instanceof Error ? error.message : "Error desconocido" });
     } finally {
       setExporting(null);
     }
@@ -551,7 +556,6 @@ export default function SchedulePage() {
       }
     >
       {!isSupabaseConfigured ? <Notice>Configura las variables de Supabase para cargar y guardar la planilla.</Notice> : null}
-      {message ? <div className="mb-4 rounded-md border border-coral/40 bg-[#fff0ed] px-4 py-3 text-sm">{message}</div> : null}
       {showGenerate ? (
         <div className="mb-3 rounded-md border border-line bg-white p-3 shadow-subtle">
           <div className="mb-3 flex items-center justify-between">

@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { DepartmentBadge } from "@/components/department-badge";
 import { PageShell } from "@/components/page-shell";
 import { Button, Field, GhostButton, Input, Notice, Select, Textarea } from "@/components/ui";
+import { useToast } from "@/components/toast-provider";
 import type { Absence, Department, Employee, ShiftType } from "@/lib/database.types";
 import { ALL_DEPARTMENTS } from "@/lib/departments";
 import { enumerateDates, formatDateEs } from "@/lib/dates";
@@ -23,7 +24,6 @@ export default function AbsencesPage() {
   const [departmentFilter, setDepartmentFilter] = useState(ALL_DEPARTMENTS);
   const [shiftTypes, setShiftTypes] = useState<ShiftType[]>([]);
   const [absences, setAbsences] = useState<AbsenceRow[]>([]);
-  const [message, setMessage] = useState("");
   const [form, setForm] = useState({
     employee_id: "",
     shift_type_id: "",
@@ -31,8 +31,9 @@ export default function AbsencesPage() {
     end_date: todayIso,
     notes: ""
   });
+  const { toast } = useToast();
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
     if (!supabase) return;
     const { data: employeeData } = await supabase.from("employees").select("*").eq("active", true).order("name");
     const { data: departmentData } = await supabase.from("departments").select("*").order("name");
@@ -41,7 +42,7 @@ export default function AbsencesPage() {
       .from("absences")
       .select("*, employees(name, department_id), shift_types(code, name, color)")
       .order("start_date", { ascending: false });
-    if (error) setMessage(error.message);
+    if (error) toast({ type: "error", title: "No se pudieron cargar las ausencias", description: error.message });
     setEmployees(employeeData ?? []);
     setDepartments(departmentData ?? []);
     setShiftTypes(typeData ?? []);
@@ -51,7 +52,7 @@ export default function AbsencesPage() {
       employee_id: current.employee_id || employeeData?.[0]?.id || "",
       shift_type_id: current.shift_type_id || typeData?.find((type) => type.code === "V")?.id || typeData?.[0]?.id || ""
     }));
-  }
+  }, [toast]);
 
   const departmentById = useMemo(() => new Map(departments.map((department) => [department.id, department])), [departments]);
   const visibleEmployees = useMemo(() => (
@@ -84,11 +85,10 @@ export default function AbsencesPage() {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [loadData]);
 
   async function save() {
     if (!supabase) return;
-    setMessage("");
     const payload = {
       employee_id: form.employee_id,
       shift_type_id: form.shift_type_id,
@@ -98,7 +98,7 @@ export default function AbsencesPage() {
     };
     const { data: absence, error } = await supabase.from("absences").insert(payload).select("id").single();
     if (error) {
-      setMessage(error.message);
+      toast({ type: "error", title: "No se pudo crear la ausencia", description: error.message });
       return;
     }
     const assignments = enumerateDates(form.start_date, form.end_date).map((date) => ({
@@ -112,22 +112,33 @@ export default function AbsencesPage() {
       updated_by_user_id: null
     }));
     const upsertResult = await supabase.from("shift_assignments").upsert(assignments, { onConflict: "employee_id,date" });
-    if (upsertResult.error) setMessage(upsertResult.error.message);
+    if (upsertResult.error) {
+      toast({ type: "error", title: "No se pudo reflejar la ausencia en la planilla", description: upsertResult.error.message });
+      return;
+    }
     setForm((current) => ({ ...current, notes: "" }));
     await loadData();
+    toast({
+      type: "success",
+      title: "Ausencia registrada",
+      description: `Se han actualizado ${assignments.length} dias en la planilla.`
+    });
   }
 
   async function remove(absence: AbsenceRow) {
     if (!supabase) return;
     const { error } = await supabase.from("absences").delete().eq("id", absence.id);
-    if (error) setMessage(error.message);
+    if (error) {
+      toast({ type: "error", title: "No se pudo borrar la ausencia", description: error.message });
+    } else {
+      toast({ type: "success", title: "Ausencia borrada" });
+    }
     await loadData();
   }
 
   return (
     <PageShell title="Vacaciones y ausencias" subtitle="Registra rangos y refleja sus turnos en la planilla.">
       {!isSupabaseConfigured ? <Notice>Configura las variables de Supabase para activar esta pantalla.</Notice> : null}
-      {message ? <div className="mb-4 rounded-md border border-coral/40 bg-[#fff0ed] px-4 py-3 text-sm">{message}</div> : null}
       <div className="mb-5 rounded-md border border-line bg-white p-4 shadow-subtle">
         <Field label="Filtrar por departamento">
           <Select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)}>

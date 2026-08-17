@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Archive, Check, Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { DepartmentBadge } from "@/components/department-badge";
 import { PageShell } from "@/components/page-shell";
 import { Button, Field, GhostButton, Input, Notice, Select, Textarea } from "@/components/ui";
+import { useToast } from "@/components/toast-provider";
 import { ALL_DEPARTMENTS, activeDepartmentOptions } from "@/lib/departments";
 import { formatDateEs } from "@/lib/dates";
 import { currentWorkloadPercentage } from "@/lib/hours";
@@ -45,10 +46,10 @@ export default function EmployeesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
   const [editingPeriodId, setEditingPeriodId] = useState<string | null>(null);
-  const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const { toast } = useToast();
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
     if (!supabase) return;
     const [{ data: employeeData, error: employeeError }, { data: departmentData, error: departmentError }] = await Promise.all([
       supabase
@@ -63,17 +64,17 @@ export default function EmployeesPage() {
       .select("*")
       .order("start_date");
     const error = employeeError ?? departmentError ?? periodError;
-    if (error) setMessage(error.message);
+    if (error) toast({ type: "error", title: "No se pudieron cargar los empleados", description: error.message });
     const nextEmployees = employeeData ?? [];
     setEmployees(nextEmployees);
     setDepartments(departmentData ?? []);
     setWorkloadPeriods(periodData ?? []);
     setSelectedEmployeeId((current) => current ?? nextEmployees[0]?.id ?? null);
-  }
+  }, [toast]);
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [loadData]);
 
   const selectedEmployee = useMemo(
     () => employees.find((employee) => employee.id === selectedEmployeeId) ?? null,
@@ -140,7 +141,6 @@ export default function EmployeesPage() {
   async function save() {
     if (!supabase) return;
     setLoading(true);
-    setMessage("");
     const payload = {
       name: form.name.trim(),
       category: departmentById.get(form.department_id)?.name ?? "",
@@ -156,8 +156,9 @@ export default function EmployeesPage() {
       : await supabase.from("employees").insert(payload).select().single();
 
     if (result.error) {
-      setMessage(result.error.message);
+      toast({ type: "error", title: "No se pudo guardar el empleado", description: result.error.message });
     } else {
+      let periodCreationError: string | null = null;
       if (!editingId && result.data) {
         const { error: periodError } = await supabase.from("employee_workload_periods").insert({
           employee_id: result.data.id,
@@ -167,11 +168,16 @@ export default function EmployeesPage() {
           annual_hours_full_time: payload.annual_target_hours,
           notes: "Periodo inicial"
         });
-        if (periodError) setMessage(periodError.message);
+        if (periodError) periodCreationError = periodError.message;
       }
       resetEmployeeForm();
       setSelectedEmployeeId(result.data?.id ?? selectedEmployeeId);
       await loadData();
+      if (periodCreationError) {
+        toast({ type: "warning", title: "Empleado guardado", description: `No se pudo crear el periodo inicial: ${periodCreationError}` });
+      } else {
+        toast({ type: "success", title: editingId ? "Empleado actualizado" : "Empleado creado", description: payload.name });
+      }
     }
     setLoading(false);
   }
@@ -179,16 +185,15 @@ export default function EmployeesPage() {
   async function savePeriod() {
     if (!supabase || !selectedEmployee) return;
     setLoading(true);
-    setMessage("");
 
     if (!periodForm.start_date) {
-      setMessage("No se puede guardar un periodo sin fecha de inicio.");
+      toast({ type: "warning", title: "Periodo incompleto", description: "No se puede guardar un periodo sin fecha de inicio." });
       setLoading(false);
       return;
     }
 
     if (Number(periodForm.workload_percentage) <= 0) {
-      setMessage("La jornada debe ser mayor que 0.");
+      toast({ type: "warning", title: "Jornada no valida", description: "La jornada debe ser mayor que 0." });
       setLoading(false);
       return;
     }
@@ -207,10 +212,11 @@ export default function EmployeesPage() {
       : await supabase.from("employee_workload_periods").insert(payload);
 
     if (result.error) {
-      setMessage(result.error.message);
+      toast({ type: "error", title: "No se pudo guardar el periodo", description: result.error.message });
     } else {
       resetPeriodForm();
       await loadData();
+      toast({ type: "success", title: editingPeriodId ? "Periodo actualizado" : "Periodo creado", description: selectedEmployee.name });
     }
     setLoading(false);
   }
@@ -221,7 +227,11 @@ export default function EmployeesPage() {
       .from("employee_workload_periods")
       .update({ end_date: todayIso })
       .eq("id", period.id);
-    if (error) setMessage(error.message);
+    if (error) {
+      toast({ type: "error", title: "No se pudo cerrar el periodo", description: error.message });
+    } else {
+      toast({ type: "success", title: "Periodo cerrado" });
+    }
     await loadData();
   }
 
@@ -232,11 +242,15 @@ export default function EmployeesPage() {
       .select("id", { count: "exact", head: true })
       .eq("employee_id", employee.id);
     if ((count ?? 0) > 0) {
-      setMessage("Este empleado tiene turnos asociados. Se puede marcar como inactivo, pero no borrar.");
+      toast({ type: "warning", title: "No se puede borrar el empleado", description: "Tiene turnos asociados. Se puede marcar como inactivo, pero no borrar." });
       return;
     }
     const { error } = await supabase.from("employees").delete().eq("id", employee.id);
-    if (error) setMessage(error.message);
+    if (error) {
+      toast({ type: "error", title: "No se pudo borrar el empleado", description: error.message });
+    } else {
+      toast({ type: "success", title: "Empleado borrado", description: employee.name });
+    }
     await loadData();
   }
 
@@ -246,14 +260,17 @@ export default function EmployeesPage() {
       .from("employees")
       .update({ active: false, end_date: employee.end_date ?? todayIso })
       .eq("id", employee.id);
-    if (error) setMessage(error.message);
+    if (error) {
+      toast({ type: "error", title: "No se pudo desactivar el empleado", description: error.message });
+    } else {
+      toast({ type: "success", title: "Empleado desactivado", description: employee.name });
+    }
     await loadData();
   }
 
   return (
     <PageShell title="Empleados" subtitle="Alta, edición e inactivación de personal.">
       {!isSupabaseConfigured ? <Notice>Configura las variables de Supabase para activar esta pantalla.</Notice> : null}
-      {message ? <div className="mb-4 rounded-md border border-coral/40 bg-[#fff0ed] px-4 py-3 text-sm">{message}</div> : null}
       <div className="grid gap-5 xl:grid-cols-[360px_1fr]">
         <form className="rounded-md border border-line bg-white p-4 shadow-subtle" onSubmit={(event) => event.preventDefault()}>
           <div className="mb-4 flex items-center justify-between">

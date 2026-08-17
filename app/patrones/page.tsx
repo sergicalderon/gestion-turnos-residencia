@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Save, Trash2 } from "lucide-react";
 import { endOfYear, format, parseISO } from "date-fns";
 import { PageShell } from "@/components/page-shell";
 import { Button, Field, GhostButton, Input, Notice, Select, Textarea } from "@/components/ui";
+import { useToast } from "@/components/toast-provider";
 import { formatDateEs } from "@/lib/dates";
 import { ALL_DEPARTMENTS } from "@/lib/departments";
 import type { Department, Employee, EmployeeShiftPattern, ShiftPattern, ShiftPatternDay, ShiftType } from "@/lib/database.types";
@@ -64,9 +65,9 @@ export default function PatternsPage() {
     custom_start_date: `${currentYear}-01-01`,
     custom_end_date: `${currentYear}-12-31`
   });
-  const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [applyingAssignment, setApplyingAssignment] = useState(false);
+  const { toast } = useToast();
 
   const shiftTypeById = useMemo(() => new Map(shiftTypes.map((type) => [type.id, type])), [shiftTypes]);
   const patternDaysById = useMemo(() => {
@@ -139,7 +140,7 @@ export default function PatternsPage() {
   const selectedTheoreticalEquivalence = workloadEquivalencePercentage(selectedStats.theoreticalAnnualHours, Number(simulationForm.full_time_annual_hours));
   const selectedSimulationEquivalence = workloadEquivalencePercentage(selectedSimulation.totalHours, Number(simulationForm.full_time_annual_hours));
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
     if (!supabase) return;
     const [
       { data: patternData, error: patternError },
@@ -157,7 +158,7 @@ export default function PatternsPage() {
       supabase.from("employee_shift_patterns").select("*").order("start_date", { ascending: false })
     ]);
     const error = patternError ?? dayError ?? shiftTypeError ?? departmentError ?? employeeError ?? assignmentError;
-    if (error) setMessage(error.message);
+    if (error) toast({ type: "error", title: "No se pudieron cargar los datos", description: error.message });
     setPatterns(patternData ?? []);
     setPatternDays(dayData ?? []);
     setShiftTypes(shiftTypeData ?? []);
@@ -170,11 +171,11 @@ export default function PatternsPage() {
       employee_id: current.employee_id || employeeData?.[0]?.id || "",
       pattern_id: current.pattern_id || patternData?.[0]?.id || ""
     }));
-  }
+  }, [toast]);
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [loadData]);
 
   function selectPattern(pattern: ShiftPattern) {
     const days = patternDays
@@ -205,13 +206,12 @@ export default function PatternsPage() {
 
   async function savePattern() {
     if (!supabase) return;
-    setMessage("");
     if (!patternForm.name.trim()) {
-      setMessage("El patron necesita nombre.");
+      toast({ type: "warning", title: "No se puede guardar el patron", description: "El patron necesita nombre." });
       return;
     }
     if (patternForm.days.length === 0 || patternForm.days.some((day) => !day)) {
-      setMessage("El patron necesita al menos un dia con tipo de turno.");
+      toast({ type: "warning", title: "No se puede guardar el patron", description: "El patron necesita al menos un dia con tipo de turno." });
       return;
     }
 
@@ -227,7 +227,7 @@ export default function PatternsPage() {
       : await supabase.from("shift_patterns").insert(payload).select("*").single();
 
     if (patternResult.error) {
-      setMessage(patternResult.error.message);
+      toast({ type: "error", title: "No se pudo guardar el patron", description: patternResult.error.message });
       setSaving(false);
       return;
     }
@@ -235,7 +235,7 @@ export default function PatternsPage() {
     const patternId = patternResult.data.id;
     const deleteResult = await supabase.from("shift_pattern_days").delete().eq("pattern_id", patternId);
     if (deleteResult.error) {
-      setMessage(deleteResult.error.message);
+      toast({ type: "error", title: "No se pudieron actualizar los dias", description: deleteResult.error.message });
       setSaving(false);
       return;
     }
@@ -247,7 +247,11 @@ export default function PatternsPage() {
         shift_type_id: shiftTypeId
       }))
     );
-    if (insertResult.error) setMessage(insertResult.error.message);
+    if (insertResult.error) {
+      toast({ type: "error", title: "No se pudieron guardar los dias", description: insertResult.error.message });
+    } else {
+      toast({ type: "success", title: selectedPatternId ? "Patron actualizado" : "Patron creado", description: patternForm.name.trim() });
+    }
     await loadData();
     setSelectedPatternId(patternId);
     setSaving(false);
@@ -256,29 +260,28 @@ export default function PatternsPage() {
   async function removePattern(pattern: ShiftPattern) {
     if (!supabase) return;
     const { error } = await supabase.from("shift_patterns").delete().eq("id", pattern.id);
-    if (error) setMessage("No se puede borrar si ya esta asignado a empleados.");
+    if (error) toast({ type: "error", title: "No se pudo borrar el patron", description: "No se puede borrar si ya esta asignado a empleados." });
     await loadData();
     if (selectedPatternId === pattern.id) resetPattern();
   }
 
   async function saveAssignment() {
     if (!supabase) return;
-    setMessage("");
     const selectedDays = patternDays.filter((day) => day.pattern_id === assignmentForm.pattern_id);
     const employee = employeeById.get(assignmentForm.employee_id);
     const pattern = patternById.get(assignmentForm.pattern_id);
     const startDayNumber = Number(assignmentForm.start_day_index);
     const storedStartDayIndex = startDayNumber - 1;
     if (selectedDays.length === 0) {
-      setMessage("No se puede asignar un patron sin dias.");
+      toast({ type: "warning", title: "No se puede asignar el patron", description: "El patron no tiene dias." });
       return;
     }
     if (!employee || !pattern) {
-      setMessage("Selecciona un empleado y un patron validos.");
+      toast({ type: "warning", title: "Seleccion incompleta", description: "Selecciona un empleado y un patron validos." });
       return;
     }
     if (startDayNumber < 1 || storedStartDayIndex >= selectedDays.length) {
-      setMessage("El dia inicial del ciclo debe estar entre 1 y la longitud del patron.");
+      toast({ type: "warning", title: "Dia inicial no valido", description: "El dia inicial del ciclo debe estar entre 1 y la longitud del patron." });
       return;
     }
     const generationEndDate = assignmentForm.end_date || format(endOfYear(parseISO(assignmentForm.start_date)), "yyyy-MM-dd");
@@ -296,7 +299,6 @@ export default function PatternsPage() {
     }
 
     setApplyingAssignment(true);
-    setMessage("Aplicando patron...");
     let createdAssignmentId: string | null = null;
     try {
       const { data: assignment, error } = await supabase.from("employee_shift_patterns").insert({
@@ -339,17 +341,29 @@ export default function PatternsPage() {
       });
 
       if (result.generated > 0 && result.skippedExisting > 0) {
-        setMessage(`Patron asignado correctamente. Se han generado ${result.generated} turnos y se han omitido ${result.skippedExisting} dias porque ya tenian turno asignado.`);
+        toast({
+          type: "warning",
+          title: "Patron asignado",
+          description: `Se generaron ${result.generated} turnos y se omitieron ${result.skippedExisting} porque ya tenian turno.`
+        });
       } else if (result.generated > 0) {
-        setMessage(`Patron asignado correctamente a ${employee.name}. Se han generado ${result.generated} turnos.`);
+        toast({
+          type: "success",
+          title: "Patron asignado correctamente",
+          description: `Se han generado ${result.generated} turnos para ${employee.name}.`
+        });
       } else if (result.skippedExisting > 0) {
-        setMessage(`Patron asignado correctamente a ${employee.name}, pero no se generaron turnos porque ${result.skippedExisting} dias ya tenian turno asignado.`);
+        toast({
+          type: "warning",
+          title: "Patron asignado sin turnos nuevos",
+          description: `${result.skippedExisting} dias ya tenian turno asignado.`
+        });
       } else if (result.skippedEmptyPatterns > 0) {
-        setMessage(`Patron asignado correctamente a ${employee.name}, pero no se generaron turnos porque el patron no tiene dias disponibles.`);
+        toast({ type: "warning", title: "Patron asignado sin turnos nuevos", description: "El patron no tiene dias disponibles." });
       } else if (result.skippedInactiveEmployees > 0) {
-        setMessage(`Patron asignado correctamente a ${employee.name}, pero no se generaron turnos porque el empleado no esta activo en el rango seleccionado.`);
+        toast({ type: "warning", title: "Patron asignado sin turnos nuevos", description: "El empleado no esta activo en el rango seleccionado." });
       } else {
-        setMessage(`Patron asignado correctamente a ${employee.name}, pero no se generaron turnos porque el rango de fechas no contiene dias aplicables.`);
+        toast({ type: "warning", title: "Patron asignado sin turnos nuevos", description: "El rango de fechas no contiene dias aplicables." });
       }
       await loadData();
     } catch (error) {
@@ -370,7 +384,11 @@ export default function PatternsPage() {
         start_day_index: storedStartDayIndex,
         error
       });
-      setMessage(`No se pudo aplicar el patron: ${error instanceof Error ? error.message : "Error desconocido"}.`);
+      toast({
+        type: "error",
+        title: "No se pudo asignar el patron",
+        description: error instanceof Error ? error.message : "Error desconocido"
+      });
     } finally {
       setApplyingAssignment(false);
     }
@@ -379,7 +397,11 @@ export default function PatternsPage() {
   async function deactivateAssignment(assignment: EmployeeShiftPattern) {
     if (!supabase) return;
     const { error } = await supabase.from("employee_shift_patterns").update({ is_active: false }).eq("id", assignment.id);
-    if (error) setMessage(error.message);
+    if (error) {
+      toast({ type: "error", title: "No se pudo desactivar la asignacion", description: error.message });
+    } else {
+      toast({ type: "success", title: "Asignacion desactivada" });
+    }
     await loadData();
   }
 
@@ -390,7 +412,6 @@ export default function PatternsPage() {
   return (
     <PageShell title="Patrones de turno" subtitle="Ciclos repetitivos y asignacion a empleados.">
       {!isSupabaseConfigured ? <Notice>Configura Supabase para usar patrones.</Notice> : null}
-      {message ? <div className="mb-4 rounded-md border border-coral/40 bg-[#fff0ed] px-4 py-3 text-sm">{message}</div> : null}
       <div className="mb-5 rounded-md border border-line bg-white p-4 shadow-subtle">
         <Field label="Filtrar por departamento">
           <Select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)}>

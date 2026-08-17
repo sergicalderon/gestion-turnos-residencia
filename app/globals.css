@@ -136,6 +136,21 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
+.toast-card {
+  animation: toast-in 180ms ease-out;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @media (max-width: 1023px) {
   .schedule-summary-col,
   .schedule-summary-header,
@@ -153,5 +168,14 @@ textarea {
 
   .schedule-coverage-table {
     min-width: calc(var(--employee-width) + (var(--day-count) * 36px));
+  }
+}
+
+@media (max-width: 767px) {
+  .toast-viewport {
+    left: 0.75rem;
+    right: 0.75rem;
+    top: 0.75rem;
+    width: auto;
   }
 }
